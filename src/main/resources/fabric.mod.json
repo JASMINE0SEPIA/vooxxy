@@ -14,7 +14,7 @@
   "contact": {
   },
   "license": "All-Rights-Reserved",
-  "icon": "assets/voxy/icon.png",
+  "icon": "assets/voxy/icon-vulkan.png",
   "environment": "*",
   "entrypoints": {
     "client": [

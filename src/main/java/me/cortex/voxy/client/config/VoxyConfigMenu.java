@@ -30,7 +30,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
         var CFG = VoxyConfig.CONFIG;
 
         var cc = B.registerModOptions("voxy", "Voxy", VoxyCommon.MOD_VERSION)
-                .setIcon(Identifier.parse("voxy:icon.png"));
+                .setIcon(Identifier.parse("voxy:icon-vulkan.png"));
 
         final var RENDER_RELOAD = OptionFlag.REQUIRES_RENDERER_RELOAD.getId().toString();
 

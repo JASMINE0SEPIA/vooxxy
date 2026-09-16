@@ -1,5 +1,10 @@
 # Voxy Vulkan — Minecraft 26.3
 
+<img src="src/main/resources/assets/voxy/icon-vulkan.png" width="96" height="96" alt="Voxy Vulkan 橙红配色图标">
+
+封面基于官方 Voxy 原图魔改，已内嵌 JAR。PCL 当前依赖在线项目封面，
+未发布的本地文件可能仍显示默认图标，见 [图标与 PCL 说明](docs/ICON.md)。
+
 独立本地移植仓库，目标是 **Minecraft Java 26.3 正式版的原生 Vulkan 后端**。
 已在 RTX 5060 Laptop 上通过真实世界中的原生 Vulkan 远景绘制、缓存恢复、
 OIT、资源重载及三个原版维度往返测试。当前仍为开发版本，验证范围见
