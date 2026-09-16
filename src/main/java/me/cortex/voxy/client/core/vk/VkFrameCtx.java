@@ -1,62 +1,45 @@
 package me.cortex.voxy.client.core.vk;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import me.cortex.voxy.common.Logger;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.util.vma.Vma;
 import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkCommandBufferAllocateInfo;
-import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
-import org.lwjgl.vulkan.VkEventCreateInfo;
-import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkMemoryBarrier;
-import org.lwjgl.vulkan.VkSubmitInfo;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 
 import static me.cortex.voxy.client.core.vk.VkUtil.check;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.*;
 
-//The per-frame Vulkan recording context for the pure-VK path.
-//
-//ALL of Voxy's GPU work is recorded into MC's live frame command buffer between
-// MC's own render passes (upload copies -> compute -> raster passes -> draws ->
-// readback copies), ordered with pipeline barriers. This class owns:
-//
-//  - the current recording target (cmd()), either MC's frame command buffer
-//    (inside the render hook) or a one-shot immediate buffer (resource
-//    construction outside a frame);
-//  - frame completion tracking WITHOUT touching MC's encoder internals: each
-//    Voxy frame ends with vkCmdSetEvent; the event provably signals only when
-//    MC has submitted the frame and the GPU reached Voxy's commands. Upload /
-//    download streams and deferred destruction retire on those events;
-//  - deferred destruction of buffers/images still referenced by frames in
-//    flight.
-//
-//Thread model: render thread only (MC records its VK frame on its render
-// thread, and every Voxy entry point here is called from that thread).
+/**
+ * Per-frame Vulkan recording/lifetime context.
+ *
+ * Voxy records into Minecraft's live command buffer and submission ownership
+ * remains entirely with Blaze3D. Resource retirement is tied to Minecraft's
+ * timeline-semaphore-backed DestructionQueue; Voxy never infers completion from
+ * an in-command-buffer event and never submits independently to the graphics
+ * queue.
+ */
 public final class VkFrameCtx {
     public interface FrameRetireListener {
-        /** Called when GPU work for frame {@code frameIdx} has provably completed. */
         void onFramesRetired(long retiredUpToInclusive);
     }
 
     private final VulkanContext ctx;
-    private VkCommandBuffer frameCmd;      //MC's frame command buffer while inside the hook
-    private VkCommandBuffer immediateCmd;  //one-shot fallback outside the hook
+    private VkCommandBuffer frameCmd;
+    private boolean synchronousHostWork;
     private boolean anyWorkThisFrame;
+    private boolean closed;
 
-    private long frameCounter = 0;         //index of the frame currently being recorded
-    private long retiredCounter = -1;      //all frames <= this have completed on the GPU
+    private long frameCounter;
+    private volatile long retiredCounter = -1;
+    private volatile int pendingFrameCallbacks;
+    private volatile int pendingNativeDestroys;
 
-    private final Deque<InFlightFrame> inFlight = new ArrayDeque<>();
-    private final ArrayList<Long> eventPool = new ArrayList<>();
-    private final ArrayList<PendingDestroy> pendingDestroys = new ArrayList<>();
     private final ArrayList<FrameRetireListener> retireListeners = new ArrayList<>();
-
-    private record InFlightFrame(long frameIdx, long event) {}
-    private record PendingDestroy(long frameIdx, long buffer, long image, long imageView, long memory) {}
+    private Throwable deferredFailure;
 
     public VkFrameCtx(VulkanContext ctx) {
         this.ctx = ctx;
@@ -67,154 +50,252 @@ public final class VkFrameCtx {
     }
 
     public void addRetireListener(FrameRetireListener listener) {
+        if (this.closed) throw new IllegalStateException("VkFrameCtx is closed");
         this.retireListeners.add(listener);
     }
 
-    /** Frame index currently being recorded; work recorded now completes when this frame retires. */
     public long currentFrame() {
         return this.frameCounter;
     }
 
-    //==================================================================================
-    // Recording targets
+    public long retiredFrame() {
+        return this.retiredCounter;
+    }
 
-    /** Enter the render hook: record into MC's frame command buffer. */
+    public int inFlightFrameCount() {
+        return this.pendingFrameCallbacks;
+    }
+
+    /** Native destruction callbacks already handed to Minecraft's safe queue. */
+    public int pendingDestroyCount() {
+        return this.pendingNativeDestroys;
+    }
+
+    /** Kept for the existing debug line; host-backed retirement uses no VkEvent pool. */
+    public int pooledEventCount() {
+        return 0;
+    }
+
     public void beginFrame(VkCommandBuffer mcFrameCommandBuffer) {
+        RenderSystem.assertOnRenderThread();
+        this.throwDeferredFailure();
+        if (this.closed) throw new IllegalStateException("VkFrameCtx is closed");
         if (this.frameCmd != null) throw new IllegalStateException("Frame already begun");
+        if (this.synchronousHostWork) throw new IllegalStateException("Unflushed synchronous Vulkan work before frame begin");
+        if (mcFrameCommandBuffer == null) throw new IllegalArgumentException("Minecraft frame command buffer is null");
         this.frameCmd = mcFrameCommandBuffer;
+        this.anyWorkThisFrame = false;
     }
 
-    /** Leave the render hook: stamp the frame event and advance the frame counter. */
+    /**
+     * Finish Voxy's recording interval. If this frame recorded GPU work, queue a
+     * tiny Java completion callback in Minecraft's own DestructionQueue. That
+     * callback runs only after the corresponding whole graphics submission has
+     * completed according to Blaze3D's timeline semaphore.
+     */
     public void endFrame() {
+        RenderSystem.assertOnRenderThread();
         if (this.frameCmd == null) throw new IllegalStateException("No frame begun");
-        if (this.anyWorkThisFrame) {
-            long event = this.obtainEvent();
-            vkCmdSetEvent(this.frameCmd, event, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-            this.inFlight.add(new InFlightFrame(this.frameCounter, event));
-            this.frameCounter++;
-            this.anyWorkThisFrame = false;
-        }
         this.frameCmd = null;
+        if (!this.anyWorkThisFrame) return;
+
+        final long frameIdx = this.frameCounter++;
+        this.anyWorkThisFrame = false;
+        this.pendingFrameCallbacks++;
+        try {
+            this.ctx.deferUntilSubmissionComplete(() -> this.onHostFrameCompleted(frameIdx));
+        } catch (RuntimeException | Error failure) {
+            this.pendingFrameCallbacks--;
+            throw failure;
+        }
     }
 
-    //The command buffer to record into. Inside the render hook this is MC's
-    // frame command buffer; outside it, a one-shot immediate command buffer is
-    // begun on demand and submitted synchronously by flushImmediate().
+    private void onHostFrameCompleted(long frameIdx) {
+        try {
+            if (this.closed) return;
+            this.retiredCounter = Math.max(this.retiredCounter, frameIdx);
+            Throwable failure = null;
+            //A readback listener is application logic and may fail. Never throw
+            //from Mojang's DestructionQueue callback: doing so could abort
+            //Minecraft's own destruction-queue rotation. Aggregate and surface
+            //the error on the next Voxy call instead.
+            for (var listener : this.retireListeners) {
+                try {
+                    listener.onFramesRetired(this.retiredCounter);
+                } catch (RuntimeException | Error listenerFailure) {
+                    failure = collectFailure(failure, listenerFailure);
+                }
+            }
+            if (failure != null) this.recordDeferredFailure(failure);
+        } finally {
+            if (this.pendingFrameCallbacks > 0) this.pendingFrameCallbacks--;
+        }
+    }
+
+    /**
+     * Current recording target. During normal rendering this is the Minecraft
+     * frame command buffer supplied by beginFrame(). Outside a frame, Voxy asks
+     * Minecraft's encoder for its current primary command buffer and marks that
+     * batch for synchronous submission by flushImmediate().
+     */
     public VkCommandBuffer cmd() {
-        this.anyWorkThisFrame = true;
-        if (this.frameCmd != null) return this.frameCmd;
-        if (this.immediateCmd == null) {
-            try (MemoryStack stack = stackPush()) {
-                var cbai = VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
-                        .commandPool(this.ctx.commandPool)
-                        .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-                        .commandBufferCount(1);
-                var pCmd = stack.mallocPointer(1);
-                check(vkAllocateCommandBuffers(this.ctx.device, cbai, pCmd), "vkAllocateCommandBuffers(immediate)");
-                this.immediateCmd = new VkCommandBuffer(pCmd.get(0), this.ctx.device);
-                var begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()
-                        .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-                check(vkBeginCommandBuffer(this.immediateCmd, begin), "vkBeginCommandBuffer(immediate)");
-            }
+        RenderSystem.assertOnRenderThread();
+        if (this.closed) throw new IllegalStateException("VkFrameCtx is closed");
+        if (this.frameCmd != null) {
+            this.anyWorkThisFrame = true;
+            return this.frameCmd;
         }
-        return this.immediateCmd;
+        this.synchronousHostWork = true;
+        return this.ctx.hostCommandBuffer();
     }
 
-    /** Submits + waits any pending immediate commands (resource init outside a frame). */
+    /**
+     * Historical name retained for callers. There is no Voxy-owned immediate
+     * command buffer anymore: this submits Minecraft's current encoder batch and
+     * waits for that exact timeline submit to complete.
+     */
     public void flushImmediate() {
-        if (this.immediateCmd == null) return;
-        var cmd = this.immediateCmd;
-        this.immediateCmd = null;
-        try (MemoryStack stack = stackPush()) {
-            check(vkEndCommandBuffer(cmd), "vkEndCommandBuffer(immediate)");
-            var fci = VkFenceCreateInfo.calloc(stack).sType$Default();
-            var pFence = stack.mallocLong(1);
-            check(vkCreateFence(this.ctx.device, fci, null, pFence), "vkCreateFence(immediate)");
-            long fence = pFence.get(0);
-            var submit = VkSubmitInfo.calloc(stack).sType$Default()
-                    .pCommandBuffers(stack.pointers(cmd));
-            check(vkQueueSubmit(this.ctx.queue, submit, fence), "vkQueueSubmit(immediate)");
-            check(vkWaitForFences(this.ctx.device, fence, true, Long.MAX_VALUE), "vkWaitForFences(immediate)");
-            vkDestroyFence(this.ctx.device, fence, null);
-            vkFreeCommandBuffers(this.ctx.device, this.ctx.commandPool, cmd);
-        }
+        RenderSystem.assertOnRenderThread();
+        this.throwDeferredFailure();
+        if (!this.synchronousHostWork) return;
+        if (this.frameCmd != null) throw new IllegalStateException("Cannot synchronously submit while a Voxy frame is active");
+
+        //Clear first. If submission itself fails, the encoder/device state is no
+        //longer safe to blindly re-submit on a cleanup path.
+        this.synchronousHostWork = false;
+        this.ctx.submitAndWaitCurrent();
+        this.throwDeferredFailure();
     }
 
-    //==================================================================================
-    // Frame retirement
-
-    /** Poll frame events; retire completed frames (recycles staging space, runs destroys). */
+    /** Host callbacks execute during Minecraft submit; polling is now only an error checkpoint. */
     public void pollRetired() {
-        boolean any = false;
-        while (!this.inFlight.isEmpty()) {
-            var frame = this.inFlight.peek();
-            int status = vkGetEventStatus(this.ctx.device, frame.event);
-            if (status != VK_EVENT_SET) break;
-            this.inFlight.pop();
-            check(vkResetEvent(this.ctx.device, frame.event), "vkResetEvent");
-            this.eventPool.add(frame.event);
-            this.retiredCounter = frame.frameIdx;
-            any = true;
-        }
-        if (any) {
-            this.runRetirement();
-        }
+        RenderSystem.assertOnRenderThread();
+        this.throwDeferredFailure();
     }
 
-    /** Hard sync: device idle, then retire EVERYTHING (shutdown / teardown). */
+    /**
+     * Synchronous device-idle helper for construction/teardown only. Current
+     * recorded work is first submitted through Minecraft's encoder so CPU/GPU
+     * ordering remains identical to Blaze3D's own command stream.
+     */
     public void waitIdleRetireAll() {
-        this.flushImmediate();
-        vkDeviceWaitIdle(this.ctx.device);
-        while (!this.inFlight.isEmpty()) {
-            vkDestroyEvent(this.ctx.device, this.inFlight.pop().event, null);
+        RenderSystem.assertOnRenderThread();
+        if (this.frameCmd != null) {
+            throw new IllegalStateException("Cannot wait/retire while Minecraft frame is still being recorded");
         }
-        //Device is idle: every recorded frame — including the one currently being
-        // recorded — has completed, so even current-frame-tagged destroys are safe.
-        this.retiredCounter = this.frameCounter;
-        this.runRetirement();
+        this.flushImmediate();
+        int idle = vkDeviceWaitIdle(this.ctx.device);
+        if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) {
+            check(idle, "vkDeviceWaitIdle");
+        }
+        if (idle == VK_ERROR_DEVICE_LOST) {
+            Logger.warn("Voxy VK: device lost while waiting for queue idle during teardown");
+        }
+        this.throwDeferredFailure();
     }
 
-    private void runRetirement() {
-        for (var l : this.retireListeners) {
-            l.onFramesRetired(this.retiredCounter);
+    /**
+     * Flush every Minecraft destruction slot after Voxy has queued its frees.
+     * Device-idle alone is insufficient because Mojang rotates its two-slot
+     * DestructionQueue only from VulkanCommandEncoder.submit().
+     */
+    public void drainDeferredDestruction() {
+        RenderSystem.assertOnRenderThread();
+        if (this.frameCmd != null) {
+            throw new IllegalStateException("Cannot drain Vulkan destruction queues while a frame is active");
         }
-        this.pendingDestroys.removeIf(d -> {
-            if (d.frameIdx <= this.retiredCounter) {
-                if (d.buffer != VK_NULL_HANDLE) vkDestroyBuffer(this.ctx.device, d.buffer, null);
-                if (d.imageView != VK_NULL_HANDLE) vkDestroyImageView(this.ctx.device, d.imageView, null);
-                if (d.image != VK_NULL_HANDLE) vkDestroyImage(this.ctx.device, d.image, null);
-                if (d.memory != VK_NULL_HANDLE) vkFreeMemory(this.ctx.device, d.memory, null);
-                return true;
+        if (this.closed) throw new IllegalStateException("VkFrameCtx is closed");
+        this.flushImmediate();
+        this.ctx.drainDeferredDestruction();
+        this.throwDeferredFailure();
+        if (this.pendingNativeDestroys != 0) {
+            Logger.warn("Voxy VK: " + this.pendingNativeDestroys
+                    + " native destroys remain after host destruction-queue drain");
+        }
+    }
+
+    private static Throwable collectFailure(Throwable first, Throwable next) {
+        if (first == null) return next;
+        first.addSuppressed(next);
+        return first;
+    }
+
+    private synchronized void recordDeferredFailure(Throwable failure) {
+        this.deferredFailure = collectFailure(this.deferredFailure, failure);
+    }
+
+    private synchronized void throwDeferredFailure() {
+        Throwable failure = this.deferredFailure;
+        this.deferredFailure = null;
+        if (failure instanceof RuntimeException runtimeFailure) throw runtimeFailure;
+        if (failure instanceof Error errorFailure) throw errorFailure;
+    }
+
+    private void queueNativeDestroy(Runnable destroy) {
+        RenderSystem.assertOnRenderThread();
+        this.pendingNativeDestroys++;
+        try {
+            this.ctx.deferUntilSubmissionComplete(() -> {
+                try {
+                    destroy.run();
+                } catch (RuntimeException | Error failure) {
+                    //Never let Voxy abort Mojang's DestructionQueue rotation.
+                    this.recordDeferredFailure(failure);
+                } finally {
+                    if (this.pendingNativeDestroys > 0) this.pendingNativeDestroys--;
+                }
+            });
+        } catch (RuntimeException | Error failure) {
+            this.pendingNativeDestroys--;
+            throw failure;
+        }
+    }
+
+    /** Destroy a buffer suballocated from Minecraft's VMA only after its submission retires. */
+    public void deferDestroyVmaBuffer(long buffer, long allocation) {
+        if (buffer == VK_NULL_HANDLE && allocation == VK_NULL_HANDLE) return;
+        if (buffer == VK_NULL_HANDLE || allocation == VK_NULL_HANDLE) {
+            throw new IllegalArgumentException("Incomplete VMA buffer handle pair");
+        }
+        this.queueNativeDestroy(() -> Vma.vmaDestroyBuffer(this.ctx.vmaAllocator, buffer, allocation));
+    }
+
+    /**
+     * Retire all views and the VMA image allocation as one ordered callback.
+     * Vulkan requires every image view to be destroyed before its image; keeping
+     * this in one callback avoids relying on ordering between separate queued
+     * destruction actions.
+     */
+    public void deferDestroyVmaImage(long image, long mainView, long allocation, long[] additionalViews) {
+        if (image == VK_NULL_HANDLE && mainView == VK_NULL_HANDLE && allocation == VK_NULL_HANDLE
+                && (additionalViews == null || additionalViews.length == 0)) return;
+        if (image == VK_NULL_HANDLE || allocation == VK_NULL_HANDLE) {
+            throw new IllegalArgumentException("Incomplete VMA image handle pair");
+        }
+        long[] ownedViews = additionalViews == null ? new long[0] : additionalViews.clone();
+        this.queueNativeDestroy(() -> {
+            for (long view : ownedViews) {
+                if (view != VK_NULL_HANDLE) vkDestroyImageView(this.ctx.device, view, null);
             }
-            return false;
+            if (mainView != VK_NULL_HANDLE) vkDestroyImageView(this.ctx.device, mainView, null);
+            Vma.vmaDestroyImage(this.ctx.vmaAllocator, image, allocation);
         });
     }
 
-    private long obtainEvent() {
-        if (!this.eventPool.isEmpty()) {
-            return this.eventPool.remove(this.eventPool.size() - 1);
-        }
-        try (MemoryStack stack = stackPush()) {
-            var eci = VkEventCreateInfo.calloc(stack).sType$Default();
-            var pEvent = stack.mallocLong(1);
-            check(vkCreateEvent(this.ctx.device, eci, null, pEvent), "vkCreateEvent");
-            return pEvent.get(0);
-        }
+    public void deferDestroyPipeline(long pipeline, long pipelineLayout, long[] modules) {
+        long[] ownedModules = modules == null ? null : modules.clone();
+        if (pipeline == VK_NULL_HANDLE && pipelineLayout == VK_NULL_HANDLE
+                && (ownedModules == null || ownedModules.length == 0)) return;
+        this.queueNativeDestroy(() -> {
+            if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(this.ctx.device, pipeline, null);
+            if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(this.ctx.device, pipelineLayout, null);
+            if (ownedModules != null) {
+                for (long module : ownedModules) {
+                    if (module != VK_NULL_HANDLE) vkDestroyShaderModule(this.ctx.device, module, null);
+                }
+            }
+        });
     }
-
-    //==================================================================================
-    // Deferred destruction
-
-    public void deferDestroy(long buffer, long memory) {
-        this.pendingDestroys.add(new PendingDestroy(this.frameCounter, buffer, VK_NULL_HANDLE, VK_NULL_HANDLE, memory));
-    }
-
-    public void deferDestroyImage(long image, long view, long memory) {
-        this.pendingDestroys.add(new PendingDestroy(this.frameCounter, VK_NULL_HANDLE, image, view, memory));
-    }
-
-    //==================================================================================
-    // Command helpers
 
     public void fillBuffer(VkBuffer buffer, long offset, long size, int value) {
         vkCmdFillBuffer(this.cmd(), buffer.buffer, offset, size, value);
@@ -222,7 +303,6 @@ public final class VkFrameCtx {
                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
     }
 
-    /** Global memory barrier in the current command buffer. */
     public void barrier(int srcStage, int srcAccess, int dstStage, int dstAccess) {
         try (MemoryStack stack = stackPush()) {
             var mb = VkMemoryBarrier.calloc(1, stack).sType$Default()
@@ -231,34 +311,37 @@ public final class VkFrameCtx {
         }
     }
 
-    /** Compute-write -> compute-read barrier (compute-to-compute chaining). */
     public void computeToComputeBarrier() {
         this.barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     }
 
-    /** Compute-write -> draw-indirect/vertex-read barrier (cmdgen -> raster draw). */
     public void computeToDrawBarrier() {
         this.barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                 VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
                 VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
     }
 
-    /** Compute-write -> transfer-read barrier (compute output -> download copy). */
     public void computeToTransferBarrier() {
         this.barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     }
 
     public void free() {
-        this.waitIdleRetireAll();
-        for (long event : this.eventPool) {
-            vkDestroyEvent(this.ctx.device, event, null);
+        RenderSystem.assertOnRenderThread();
+        if (this.frameCmd != null) {
+            throw new IllegalStateException("Cannot free VkFrameCtx while a Minecraft frame is being recorded");
         }
-        this.eventPool.clear();
-        if (!this.pendingDestroys.isEmpty()) {
-            Logger.warn("VkFrameCtx freed with " + this.pendingDestroys.size() + " pending destroys remaining");
+        try {
+            this.flushImmediate();
+        } catch (RuntimeException | Error failure) {
+            Logger.error("Error flushing Voxy synchronous Vulkan work during frame-context close", failure);
         }
+        this.closed = true;
+        this.retireListeners.clear();
+        //Native destroys and old frame-completion callbacks already queued in
+        //Minecraft remain valid: their closures own the raw handles they need.
+        //Completion callbacks observe closed=true and become no-ops.
     }
 }

@@ -1,25 +1,37 @@
 package me.cortex.voxy.client.core.vk;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
 import me.cortex.voxy.client.mixin.vk.AccessorVulkanCommandEncoder;
+import me.cortex.voxy.client.mixin.vk.AccessorVulkanDevice;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkInstance;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkQueue;
 
-//IVkHost backed by MC 26.2's live Blaze3D Vulkan device. The device-level
-// handles (instance/physical device/device/queue+family) are pulled directly
-// from MC's VulkanDevice and are stable for the device lifetime. The per-frame
-// command buffer is resolved live from MC's persistent command encoder; the
-// world colour/depth attachments are passed straight to the render core each
-// frame from the Sodium hook's output target, so the adapter holds no per-frame
-// state.
+// IVkHost backed by Minecraft 26.3's live RenderPearl Vulkan device.
 public final class MinecraftVkHostAdapter implements IVkHost {
+    // 26.3 forwards this directly to vkWaitSemaphores (nanoseconds), despite
+    // the anonymous GpuFence implementation's misleading timeoutMs name.
+    private static final long SYNCHRONOUS_SUBMIT_TIMEOUT_NS = java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
     private final VulkanDevice device;
 
     public MinecraftVkHostAdapter(VulkanDevice device) {
         this.device = device;
+        if (!((AccessorVulkanDevice) (Object) device).voxy$enabledFeatures().contains(VoxyVkFeatures.TERRAIN)) {
+            throw new IllegalStateException("Voxy requires shaderInt64, fragmentStoresAndAtomics and vertexPipelineStoresAndAtomics");
+        }
+    }
+
+    @Override
+    public boolean hasDrawIndirectCount() {
+        return ((AccessorVulkanDevice) (Object) this.device).voxy$enabledFeatures().contains(VoxyVkFeatures.INDIRECT_COUNT);
+    }
+
+    private VulkanCommandEncoder encoder() {
+        return ((AccessorVulkanDevice) (Object) this.device).voxy$commandEncoder();
     }
 
     @Override public VkInstance instance() { return this.device.instance().vkInstance(); }
@@ -27,12 +39,60 @@ public final class MinecraftVkHostAdapter implements IVkHost {
     @Override public VkDevice device() { return this.device.vkDevice(); }
     @Override public VkQueue graphicsQueue() { return this.device.graphicsQueue().vkQueue(); }
     @Override public int graphicsQueueFamily() { return this.device.graphicsQueue().queueFamilyIndex(); }
+    @Override public long vmaAllocator() { return this.device.vma(); }
 
     @Override
     public VkCommandBuffer frameCommandBuffer() {
-        //MC's persistent per-frame encoder; the command buffer it is currently
-        // recording into (null outside a render pass)
-        var encoder = (AccessorVulkanCommandEncoder) (Object) this.device.createCommandEncoder();
-        return encoder.voxy$currentCommandBuffer();
+        RenderSystem.assertOnRenderThread();
+        var accessor = (AccessorVulkanCommandEncoder) (Object) this.encoder();
+        var current = accessor.voxy$currentCommandBuffer();
+        //Sodium may legitimately draw no vanilla chunk batches. In that case
+        //Blaze3D may not have needed a command buffer yet, but Voxy still has LOD
+        //work to record. The hook is after Sodium's RenderPass has closed, so use
+        //Minecraft's own private commandBuffer() path to allocate/begin/attach a
+        //primary command buffer to the current submission instead of skipping.
+        return current != null ? current : accessor.voxy$ensureCommandBuffer();
+    }
+
+    @Override
+    public void submitAndWaitCurrent() {
+        RenderSystem.assertOnRenderThread();
+        var encoder = this.encoder();
+        //createFence() snapshots the current timeline submit index. submit()
+        //signals that exact value before incrementing the encoder index, so the
+        //fence waits for the batch containing all commands Voxy just appended.
+        var fence = encoder.createFence();
+        try {
+            encoder.submit();
+            if (!fence.awaitCompletion(SYNCHRONOUS_SUBMIT_TIMEOUT_NS)) {
+                throw new IllegalStateException("Timed out waiting for Minecraft Vulkan submission used by Voxy");
+            }
+        } finally {
+            fence.close();
+        }
+    }
+
+    @Override
+    public void deferUntilSubmissionComplete(Runnable action) {
+        RenderSystem.assertOnRenderThread();
+        if (action == null) throw new IllegalArgumentException("retirement action is null");
+        //Mojang's VulkanCommandEncoder owns a two-slot DestructionQueue. submit()
+        //waits the matching timeline-semaphore value before rotating a slot, so
+        //this callback runs only after every command in the relevant submission
+        //has completed. That is the Vulkan-valid lifetime boundary for Voxy's
+        //buffers/images/pipelines and CPU staging bookkeeping.
+        this.encoder().queueForDestroy(action::run);
+    }
+
+    @Override
+    public void drainDeferredDestruction() {
+        RenderSystem.assertOnRenderThread();
+        //Minecraft rotates one destruction slot per submit and exposes the exact
+        //number of potentially in-flight submissions. Advance through every slot
+        //using the host's normal timeline-fenced submission path; never invoke or
+        //reflect into the private destruction queue directly.
+        for (int i = 0; i < VulkanCommandEncoder.MAX_SUBMITS_IN_FLIGHT; i++) {
+            this.submitAndWaitCurrent();
+        }
     }
 }

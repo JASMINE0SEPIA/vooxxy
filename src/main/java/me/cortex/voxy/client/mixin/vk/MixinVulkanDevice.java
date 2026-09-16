@@ -1,8 +1,10 @@
 package me.cortex.voxy.client.mixin.vk;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
 import me.cortex.voxy.client.core.vk.MinecraftVkHost;
 import me.cortex.voxy.client.core.vk.MinecraftVkHostAdapter;
+import me.cortex.voxy.client.core.vk.VulkanBackend;
 import me.cortex.voxy.common.Logger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -12,11 +14,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 //The Blaze3D-VK adapter. When MC 26.2 initialises its own Vulkan device
 // (Graphics API = Vulkan), this registers an IVkHost backed by that live
 // device so Voxy adopts it (no second VkDevice) and records into MC's frame.
-// Cleared when MC tears the device down (shutdown), after which Voxy has no
-// host and is inactive until a device is registered again.
-//
-//If MC is on OpenGL this class is simply never instantiated, so the host stays
-// unregistered and Voxy uses its OpenGL backend — no runtime cost on the GL path.
 @Mixin(VulkanDevice.class)
 public class MixinVulkanDevice {
     @Inject(method = "<init>", at = @At("TAIL"))
@@ -33,7 +30,39 @@ public class MixinVulkanDevice {
     }
 
     @Inject(method = "close", at = @At("HEAD"))
-    private void voxy$clearHost(CallbackInfo ci) {
-        MinecraftVkHost.clear();
+    private void voxy$shutdownRendererBeforeDeviceClose(CallbackInfo ci) {
+        //Phase 1: stop Voxy while Minecraft's command encoder and VMA allocator
+        //are still alive. Per-world resources can therefore retire through
+        //Blaze3D's own submission/destruction lifecycle before device teardown.
+        try {
+            var holder = IVoxyRenderSystemHolder.getNullableHolder();
+            if (holder != null) {
+                holder.voxy$shutdownRenderer();
+            }
+        } catch (Throwable t) {
+            Logger.error("Voxy: failed to shut renderer down before Vulkan device close", t);
+        }
+    }
+
+    @Inject(
+            method = "close",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder;destroy()V",
+                    shift = At.Shift.AFTER
+            )
+    )
+    private void voxy$shutdownBackendAfterSubmissionDrain(CallbackInfo ci) {
+        //Phase 2: VulkanCommandEncoder.destroy() has waited the graphics queue
+        //idle and drained its destruction queues. Voxy can now destroy only its
+        //device-lifetime sampler/descriptor-layout caches and Java-side context
+        //metadata before Minecraft destroys the shared VMA allocator/VkDevice.
+        try {
+            VulkanBackend.shutdown();
+        } catch (Throwable t) {
+            Logger.error("Voxy: failed to release Vulkan backend after Minecraft submission drain", t);
+        } finally {
+            MinecraftVkHost.clear();
+        }
     }
 }

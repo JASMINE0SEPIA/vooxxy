@@ -9,11 +9,9 @@ import me.cortex.voxy.client.core.vk.VkShaderPipeline;
 import me.cortex.voxy.client.core.vk.VkShaderSource;
 import me.cortex.voxy.client.core.vk.VkUploadStream;
 import org.joml.Matrix4f;
-import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 
 import java.util.List;
 
-import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.*;
 
 //Pure-VK port of the GL SSAO pass (post/ssao.comp): between the temporal and
@@ -22,11 +20,6 @@ import static org.lwjgl.vulkan.VK10.*;
 // this pass is load-bearing for compositing: the raw colour target carries
 // per-pixel METADATA in its alpha channel, and this pass rewrites alpha to 1
 // (LOD present) / 0 (empty), which is what the composite blend expects.
-//
-// The BETTER/BEST modes additionally sample MC's own depth attachment (for AO
-// across the vanilla/LOD seam), transitioned around the dispatch. AUTO mode is
-// resolved from the device-local heap size (VK always exposes heap sizes,
-// unlike the GL Capabilities memory query).
 public class VkSSAO {
     private final VkFrameCtx ctx;
     private final VkUploadStream uploadStream;
@@ -37,7 +30,7 @@ public class VkSSAO {
     private final VkBuffer params;
     private final long colourSampler;
     private final long depthSampler;
-    private final Matrix4f invScratch = new Matrix4f();//per-frame matrix inversion scratch (avoids a heap alloc each compute())
+    private final Matrix4f invScratch = new Matrix4f();
 
     public VkSSAO(VkFrameCtx ctx, VkUploadStream uploadStream, RenderProperties properties, SSAO.SSAOMode mode) {
         this.ctx = ctx;
@@ -57,7 +50,6 @@ public class VkSSAO {
         }
         String src = VkShaderSource.load("voxy:post/ssao.comp", defs.build());
         if (this.isBetterSSAO) {
-            //Same compile-time sample disk the GL builder splices in via replace()
             src = src.replace("%%CONST_ARRAY%%", generateSamplePoints(this.spp));
         }
 
@@ -66,26 +58,37 @@ public class VkSSAO {
                         VkShaderPipeline.sampler(3), VkShaderPipeline.ubo(4))
                 : List.of(VkShaderPipeline.image(0), VkShaderPipeline.sampler(1), VkShaderPipeline.sampler(2),
                         VkShaderPipeline.ubo(4));
-        this.pipeline = new VkShaderPipeline(ctx, "ssao.comp", src, 0, bindings);
 
-        this.params = new VkBuffer(ctx, 256).zero();
-        ctx.flushImmediate();
-        this.colourSampler = VkImage2D.createSampler(ctx.vk(), false, false);//nearest (GL colourTex is NEAREST)
-        //GL: better -> NEAREST(+mip), basic -> LINEAR; our targets are single-mip
-        this.depthSampler = VkImage2D.createSampler(ctx.vk(), false, !this.isBetterSSAO);
+        VkShaderPipeline createdPipeline = null;
+        VkBuffer createdParams = null;
+        long createdColourSampler;
+        long createdDepthSampler;
+        try {
+            createdPipeline = new VkShaderPipeline(ctx, "ssao.comp", src, 0, bindings);
+            createdParams = new VkBuffer(ctx, 256).zero();
+            ctx.flushImmediate();
+            createdColourSampler = VkImage2D.createSampler(ctx.vk(), false, false);
+            createdDepthSampler = VkImage2D.createSampler(ctx.vk(), false, !this.isBetterSSAO);
+        } catch (RuntimeException | Error failure) {
+            if (createdParams != null) {
+                createdParams.free();
+                ctx.waitIdleRetireAll();
+            }
+            if (createdPipeline != null) createdPipeline.free();
+            throw failure;
+        }
+
+        this.pipeline = createdPipeline;
+        this.params = createdParams;
+        this.colourSampler = createdColourSampler;
+        this.depthSampler = createdDepthSampler;
     }
 
     private static SSAO.SSAOMode resolveAuto(VkFrameCtx ctx, SSAO.SSAOMode mode) {
         if (mode != SSAO.SSAOMode.AUTO) return mode;
-        //Budget-based heuristic: pick the highest tier whose sample count fits a
-        // per-frame sample budget = screenPixels * spp. Downgrades high-resolution
-        // devices (more pixels = more samples at the same spp) and unified-memory
-        // Macs (where the previous heap-size heuristic always picked BEST because
-        // the "device-local heap" is the whole RAM).
         long w = net.minecraft.client.Minecraft.getInstance().getWindow().getWidth();
         long h = net.minecraft.client.Minecraft.getInstance().getWindow().getHeight();
         long pixels = Math.max(1, w * h);
-        //BEST = 24 spp, BETTER = 12 spp; budget thresholds in samples/frame.
         if (pixels * 24 < 50_000_000L) return SSAO.SSAOMode.BEST;
         if (pixels * 12 < 150_000_000L) return SSAO.SSAOMode.BETTER;
         return SSAO.SSAOMode.BASIC;
@@ -106,15 +109,10 @@ public class VkSSAO {
         return array.toString();
     }
 
-    /**
-     * Records the SSAO dispatch: colour+depth (and MC depth for BETTER) sampled,
-     * colourSSAO written. Leaves colourSSAO in COLOR_ATTACHMENT layout for the
-     * translucent pass and the offscreen depth back in attachment layout.
-     */
     public void compute(VkViewport viewport, VkCompositor.VkViewportRT rt) {
         var cmd = this.ctx.cmd();
 
-        {//params UBO: BASIC = MVP,invMVP; BETTER = Proj,invProj,MV,sourceInvProj
+        {
             long ptr = this.uploadStream.upload(this.params, 0, 256);
             var scratch = this.invScratch;
             if (this.isBetterSSAO) {
@@ -131,47 +129,51 @@ public class VkSSAO {
         this.ctx.barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
 
-        //opaque+temporal colour -> sampled; offscreen depth -> sampled; SSAO target -> storage
         viewport.colour.transition(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
         viewport.depthStencil.transition(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        //colourSSAO can arrive here from the previous frame's sampled composite,
+        //from a colour-attachment pass, or from a fog-covered frame where the
+        //composite was skipped. Use a conservative source scope for this one
+        //conditional state machine instead of guessing the previous pass.
         viewport.colourSSAO.transition(VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+
         if (this.isBetterSSAO) {
-            VkFrameHost.transitionMcImage(cmd, rt.mcDepth(), true,
-                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            //Minecraft's main depth image remains GENERAL; only synchronize its
+            //previous attachment writes for sampling by this compute pass.
+            VkFrameHost.barrierMcImageForSampling(cmd, rt.mcDepth(), true);
         }
 
-        this.pipeline.bind(cmd);
-        try (var b = this.pipeline.binder()) {
-            b.image(0, viewport.colourSSAO.view)
-                    .sampler(1, viewport.colour.view, this.colourSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                    .sampler(2, viewport.depthSampleView, this.depthSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            if (this.isBetterSSAO) {
-                b.sampler(3, VkFrameHost.vkView(rt.mcDepth()), this.depthSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        try {
+            this.pipeline.bind(cmd);
+            try (var b = this.pipeline.binder()) {
+                b.image(0, viewport.colourSSAO.view)
+                        .sampler(1, viewport.colour.view, this.colourSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                        .sampler(2, viewport.depthSampleView, this.depthSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                if (this.isBetterSSAO) {
+                    b.sampler(3, VkFrameHost.vkView(rt.mcDepth()), this.depthSampler, VK_IMAGE_LAYOUT_GENERAL);
+                }
+                b.ubo(4, this.params).push(cmd);
             }
-            b.ubo(4, this.params).push(cmd);
+            vkCmdDispatch(cmd, (viewport.width + 7) / 8, (viewport.height + 7) / 8, 1);
+        } finally {
+            if (this.isBetterSSAO) {
+                VkFrameHost.barrierMcImageForAttachment(cmd, rt.mcDepth(), true);
+            }
+            viewport.colourSSAO.transition(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            viewport.depthStencil.transition(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
         }
-        vkCmdDispatch(cmd, (viewport.width + 7) / 8, (viewport.height + 7) / 8, 1);
-
-        if (this.isBetterSSAO) {
-            VkFrameHost.transitionMcImage(cmd, rt.mcDepth(), true,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-        }
-        //SSAO output -> colour attachment for the translucent pass
-        viewport.colourSSAO.transition(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-        //offscreen depth back to attachment for the translucent pass
-        viewport.depthStencil.transition(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
     }
 
     public void addDebugInfo(List<String> debugLines) {
@@ -181,7 +183,5 @@ public class VkSSAO {
     public void free() {
         this.pipeline.free();
         this.params.free();
-        //colourSampler/depthSampler come from VkImage2D.createSampler's device-lifetime
-        // cache (shared handles); never destroy them per-object (multi-free -> SIGSEGV).
     }
 }

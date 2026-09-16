@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-17",
+  "minecraft": "26.3",
+  "backend": "Minecraft native Vulkan",
+  "gpu": "NVIDIA GeForce RTX 5060 Laptop GPU",
+  "driver": "616.92",
+  "command": "./gradlew.bat runSmokeClient -PvalidateVulkan -PsyncSmoke -PlifecycleSmoke -PimportSmoke -PtravelSmoke",
+  "source_log": "artifacts/final-full/validation.log",
+  "log_sha256": "B40BF566682B7D729BA39CBB74356D708BC30FE5616EC1CFB276FB5AE6C62D3C",
+  "build_success": true,
+  "block_state_roundtrips": 35723,
+  "imported_chunks": 769,
+  "imported_section_updates": 88095,
+  "dimensions": [
+    "overworld",
+    "the_nether",
+    "the_end"
+  ],
+  "travel_blocks": 1152,
+  "validation_errors": 0,
+  "vanilla_crash_markers_disabled_in_test_only": true,
+  "live_block_and_light_check": true,
+  "live_block_removal_check": true,
+  "sampled_frame_intervals": {
+    "count": 6286,
+    "p50_ms": 32.304,
+    "p95_ms": 34.732,
+    "p99_ms": 35.499,
+    "max_ms": 648.546,
+    "includes": "frame cap, loading, resource reload and Vulkan validation",
+    "gpu_benchmark": false
+  },
+  "final_geometry_sections": 1764,
+  "steady_voxy_buffer_count": 28,
+  "steady_voxy_image_count": 6,
+  "voxy_buffer_allocated_mib": 2169,
+  "voxy_image_allocated_mib": 525,
+  "release_check": {
+    "source_log": "artifacts/final-release/validation.log",
+    "log_sha256": "DB5005C4DA8A500A2A295D3F9A57BF56E8E641F849C2467F6AF9FB60F0736296",
+    "fresh_place_remove_after_clear": true,
+    "all_voxy_gpu_wrappers_released": true
+  }
+}

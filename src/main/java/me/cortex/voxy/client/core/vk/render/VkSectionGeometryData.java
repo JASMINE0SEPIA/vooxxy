@@ -4,12 +4,15 @@ import me.cortex.voxy.client.core.rendering.section.geometry.IBasicGeometryData;
 import me.cortex.voxy.client.core.rendering.util.IDeviceBuffer;
 import me.cortex.voxy.client.core.vk.VkBuffer;
 import me.cortex.voxy.client.core.vk.VkFrameCtx;
+import me.cortex.voxy.client.core.vk.VkUtil;
 import me.cortex.voxy.common.Logger;
 
 //Pure-VK geometry store: the quad geometry buffer + per-section metadata as
-// plain device-local VkBuffers (no sparse tricks — Vulkan allocation succeeds
-// or fails up front; on failure we halve the capacity and retry).
+//plain device-local VkBuffers (no sparse tricks — Vulkan allocation succeeds
+//or fails up front; on OOM we halve the capacity and retry).
 public class VkSectionGeometryData implements IBasicGeometryData {
+    private static final long MIN_GEOMETRY_CAPACITY = 64L << 20;
+
     private final VkBuffer sectionMetadataBuffer;
     private final VkBuffer geometryBuffer;
     private final int maxSectionCount;
@@ -18,24 +21,40 @@ public class VkSectionGeometryData implements IBasicGeometryData {
     public VkSectionGeometryData(VkFrameCtx ctx, int maxSectionCount, long geometryCapacity) {
         this.maxSectionCount = maxSectionCount;
         if ((geometryCapacity % 8) != 0) throw new IllegalStateException();
-        this.sectionMetadataBuffer = new VkBuffer(ctx, (long) maxSectionCount * SECTION_METADATA_SIZE);
+
+        VkBuffer metadata = new VkBuffer(ctx, (long) maxSectionCount * SECTION_METADATA_SIZE);
         VkBuffer buffer = null;
-        long capacity = geometryCapacity;
-        while (buffer == null) {
-            try {
-                Logger.info("Allocating " + (capacity / (1024 * 1024)) + "MB VK geometry buffer");
-                buffer = new VkBuffer(ctx, capacity);
-            } catch (RuntimeException e) {
-                if (capacity <= (256L << 20)) throw e;
-                capacity /= 2;
-                Logger.warn("VK geometry allocation failed, retrying with " + (capacity / (1024 * 1024)) + "MB");
+        try {
+            long capacity = Math.max(MIN_GEOMETRY_CAPACITY, geometryCapacity);
+            while (buffer == null) {
+                try {
+                    Logger.info("Allocating " + (capacity / (1024 * 1024)) + "MB VK geometry buffer");
+                    buffer = new VkBuffer(ctx, capacity);
+                } catch (VkUtil.VulkanCallException failure) {
+                    if (!failure.isOutOfMemory() || capacity <= MIN_GEOMETRY_CAPACITY) throw failure;
+                    capacity = Math.max(MIN_GEOMETRY_CAPACITY, capacity / 2);
+                    Logger.warn("VK geometry allocation ran out of memory, retrying with "
+                            + (capacity / (1024 * 1024)) + "MB");
+                }
             }
+
+            //Match the GL path's zeroed geometry buffer.
+            buffer.zero();
+            metadata.zero();
+            ctx.flushImmediate();
+        } catch (RuntimeException | Error failure) {
+            //If every geometry retry fails (or initialization fails after an
+            //allocation succeeded), this object never escapes its constructor.
+            //Explicitly retire anything already allocated instead of stranding
+            //the metadata buffer or the last successful geometry allocation.
+            if (buffer != null) buffer.free();
+            metadata.free();
+            ctx.waitIdleRetireAll();
+            throw failure;
         }
+
+        this.sectionMetadataBuffer = metadata;
         this.geometryBuffer = buffer;
-        //Match the GL path's zeroed geometry buffer
-        this.geometryBuffer.zero();
-        this.sectionMetadataBuffer.zero();
-        ctx.flushImmediate();
     }
 
     @Override

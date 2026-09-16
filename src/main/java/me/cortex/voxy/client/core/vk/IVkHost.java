@@ -7,22 +7,51 @@ import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkQueue;
 
 /**
- * The PURE-VK integration seam. When Minecraft 26.2+ itself runs on its
- * experimental Vulkan backend ("Prefer Vulkan" Graphics API setting), Voxy must
- * not create a second device: it adopts the game's device and records into the
- * game's frame. An adapter implements this against Blaze3D's Vulkan internals.
- *
- * This is also THE macOS path: MoltenVK has no VK_KHR_external_memory_fd, so
- * the GL-interop hybrid can never run there — on Mac, Voxy-on-Vulkan requires
- * MC-on-Vulkan (which vanilla 26.2 officially supports via MoltenVK).
+ * The pure-Vulkan integration seam. Voxy adopts Minecraft's Vulkan device and
+ * records into the game's live frame rather than creating a second VkDevice.
  */
 public interface IVkHost {
+    default boolean hasDrawIndirectCount() { return false; }
+
     VkInstance instance();
     VkPhysicalDevice physicalDevice();
     VkDevice device();
     VkQueue graphicsQueue();
     int graphicsQueueFamily();
 
-    /** Command buffer currently recording for this frame's world rendering, at the LOD injection point. */
+    /** Minecraft-owned VMA allocator associated with the adopted VkDevice. */
+    long vmaAllocator();
+
+    /**
+     * Minecraft's primary graphics command buffer for the current submission.
+     * The host ensures one exists when Voxy asks at a safe, render-pass-free
+     * integration point.
+     */
     VkCommandBuffer frameCommandBuffer();
+
+    /**
+     * Submit Minecraft's current Vulkan encoder batch and synchronously wait for
+     * that exact timeline-semaphore submit to complete. This is used only for
+     * construction/readback work that truly needs CPU-visible completion.
+     */
+    void submitAndWaitCurrent();
+
+    /**
+     * Run {@code action} only after the Minecraft Vulkan submission associated
+     * with the host's current destruction slot is known complete.
+     *
+     * Minecraft 26.2 already tracks submit completion with a timeline semaphore
+     * and rotates its DestructionQueue only after the corresponding submit has
+     * completed. Voxy must use that lifecycle boundary rather than inferring
+     * completion from an in-command-buffer VkEvent.
+     */
+    void deferUntilSubmissionComplete(Runnable action);
+
+    /**
+     * Advance Minecraft's own deferred-destruction queues until every slot that
+     * could contain Voxy resources has rotated. Implementations must do this via
+     * the host encoder/submission lifecycle; Voxy must never execute Mojang's
+     * destruction callbacks directly.
+     */
+    void drainDeferredDestruction();
 }

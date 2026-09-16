@@ -17,6 +17,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientChunkCache.class)
 public class MixinClientChunkCache implements ICheekyClientChunkCache {
+    @Shadow @org.spongepowered.asm.mixin.Final
+    private net.minecraft.client.multiplayer.ClientLevel level;
+
+    @Inject(method = "onLightUpdate", at = @At("TAIL"))
+    private void voxy$queueLightUpdate(net.minecraft.world.level.LightLayer layer, net.minecraft.core.SectionPos section, CallbackInfo ci) {
+        ((me.cortex.voxy.client.IVoxelUpdateQueue) this.level).voxy$queueSectionUpdate(section);
+    }
+
     @Unique
     private static final boolean BOBBY_INSTALLED = FabricLoader.getInstance().isModLoaded("bobby");
 

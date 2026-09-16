@@ -1,9 +1,9 @@
 package me.cortex.voxy.client.core.vk.render;
 
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanConst;
-import com.mojang.blaze3d.vulkan.VulkanGpuTexture;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanConst;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTexture;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -12,15 +12,16 @@ import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.*;
 
-//Accessors for MC's live Vulkan frame resources at the render hook point:
-// the world colour/depth attachment views MC is rendering into and the
-// lightmap texture view. All calls are render-thread only.
+//Accessors for Minecraft's live Vulkan frame resources at the Sodium hook point.
 public final class VkFrameHost {
     private VkFrameHost() {}
 
-    /** VkImageView of MC's lightmap (bound as Voxy's terrain light sampler). */
+    public static GpuTextureView lightmapTextureView() {
+        return Minecraft.getInstance().gameRenderer.levelLightmap();
+    }
+
     public static long lightmapView() {
-        return ((VulkanGpuTextureView) Minecraft.getInstance().gameRenderer.levelLightmap()).vkImageView();
+        return vkView(lightmapTextureView());
     }
 
     public static long vkView(GpuTextureView view) {
@@ -31,57 +32,84 @@ public final class VkFrameHost {
         return VulkanConst.toVk(view.texture().getFormat());
     }
 
-    //Layout-transition one of MC's own images (colour/depth attachment) with
-    // scoped stage/access masks matching the actual producer/consumer.
-    // Depth-stencil images transition both aspects together (DEPTH|STENCIL)
-    // since Voxy never enables separateDepthStencilLayouts.
-    public static void transitionMcImage(VkCommandBuffer cmd, GpuTextureView view,
-                                          boolean depth, int oldLayout, int newLayout) {
+    /**
+     * Minecraft 26.2's VulkanGpuTexture keeps images in GENERAL layout for
+     * sampling and attachments. Voxy must not transition those images behind
+     * Blaze3D's back; it only inserts same-layout memory dependencies.
+     */
+    public static void barrierMcImageForSampling(VkCommandBuffer cmd, GpuTextureView view, boolean depth) {
+        int dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        barrierMcImageGeneral(cmd, view, depth,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                dstStage,
+                VK_ACCESS_SHADER_READ_BIT);
+    }
+
+    public static void barrierMcImageForAttachment(VkCommandBuffer cmd, GpuTextureView view, boolean depth) {
+        int dstStage;
+        int dstAccess;
+        if (depth) {
+            dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dstAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        } else {
+            dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dstAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        }
+        barrierMcImageGeneral(cmd, view, depth,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                dstStage,
+                dstAccess);
+    }
+
+    /**
+     * Handoff barrier used after Voxy has written a Minecraft-owned target. The
+     * next Blaze3D user is outside Voxy's control and may be an attachment,
+     * sampler, transfer, or post-processing input, so publish to a deliberately
+     * broad destination scope while preserving Minecraft's GENERAL layout.
+     */
+    public static void barrierMcImageForExternalUse(VkCommandBuffer cmd, GpuTextureView view, boolean depth) {
+        barrierMcImageGeneral(cmd, view, depth,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+    }
+
+    private static void barrierMcImageGeneral(VkCommandBuffer cmd, GpuTextureView view, boolean depth,
+                                               int srcStage, int srcAccess,
+                                               int dstStage, int dstAccess) {
         try (MemoryStack stack = stackPush()) {
-            long image = ((VulkanGpuTexture) view.texture()).vkImage();
-            //MC's depth attachment is written by the late fragment tests; MC's
-            // colour by the fragment shader. Voxy reads both from the fragment
-            // shader (sampler). Reverse transitions are FRAGMENT_SHADER read ->
-            // late-fragment-tests write.
-            int srcStage, srcAccess, dstStage, dstAccess;
-            boolean toSampled = newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            if (depth) {
-                if (toSampled) {
-                    srcStage = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-                    srcAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-                    dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-                    dstAccess = VK_ACCESS_SHADER_READ_BIT;
-                } else {
-                    srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-                    srcAccess = VK_ACCESS_SHADER_READ_BIT;
-                    dstStage = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-                    dstAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-                }
-            } else {
-                if (toSampled) {
-                    srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-                    srcAccess = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-                    dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-                    dstAccess = VK_ACCESS_SHADER_READ_BIT;
-                } else {
-                    srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-                    srcAccess = VK_ACCESS_SHADER_READ_BIT;
-                    dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-                    dstAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-                }
+            var texture = view.texture();
+            long image = ((VulkanGpuTexture) texture).vkImage();
+            var format = texture.getFormat();
+            int aspectMask = 0;
+            if (format.hasColorAspect()) aspectMask |= VK_IMAGE_ASPECT_COLOR_BIT;
+            if (format.hasDepthAspect()) aspectMask |= VK_IMAGE_ASPECT_DEPTH_BIT;
+            if (format.hasStencilAspect()) aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+            if (aspectMask == 0) {
+                throw new IllegalStateException("Minecraft Vulkan texture has no usable image aspect: " + format);
             }
-            //Depth-stencil: transition both aspects together.
-            int aspectMask = depth ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_COLOR_BIT;
+            if (depth && (aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) == 0) {
+                throw new IllegalArgumentException("Expected depth texture, got " + format);
+            }
+            if (!depth && (aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) == 0) {
+                throw new IllegalArgumentException("Expected color texture, got " + format);
+            }
+
             var imb = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
-                    .srcAccessMask(srcAccess).dstAccessMask(dstAccess)
-                    .oldLayout(oldLayout).newLayout(newLayout)
+                    .srcAccessMask(srcAccess)
+                    .dstAccessMask(dstAccess)
+                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .newLayout(VK_IMAGE_LAYOUT_GENERAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
             imb.subresourceRange()
                     .aspectMask(aspectMask)
-                    .levelCount(VK_REMAINING_MIP_LEVELS)
-                    .layerCount(VK_REMAINING_ARRAY_LAYERS);
+                    .baseMipLevel(0).levelCount(VK_REMAINING_MIP_LEVELS)
+                    .baseArrayLayer(0).layerCount(VK_REMAINING_ARRAY_LAYERS);
             vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, null, null, imb);
         }
     }

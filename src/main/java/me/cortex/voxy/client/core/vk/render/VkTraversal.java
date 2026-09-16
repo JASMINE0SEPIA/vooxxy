@@ -25,28 +25,19 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.*;
 
 //Pure-VK port of HierarchicalOcclusionTraverser: the same iterative BFS over
-// the LOD node tree (flip-flop GPU queues, one indirect dispatch per LOD layer),
-// HiZ-tested, emitting the render list + node requests. CPU-side TLN bookkeeping
-// and request readback are identical to the GL implementation.
+//the LOD node tree (flip-flop GPU queues, one indirect dispatch per LOD layer),
+//HiZ-tested, emitting the render list + node requests. CPU-side TLN bookkeeping
+//and request readback are identical to the GL implementation.
 public class VkTraversal {
     public static final int MAX_REQUEST_QUEUE_SIZE = HierarchicalOcclusionTraverser.MAX_REQUEST_QUEUE_SIZE;
     public static final int MAX_QUEUE_SIZE = HierarchicalOcclusionTraverser.MAX_QUEUE_SIZE;
     private static final int MAX_ITERATIONS = WorldEngine.MAX_LOD_LAYER + 1;
-    //Traversal workgroup size: 64 threads (2 subgroups on 32-wide devices, 1 on
-    // 64-wide AMD) improves HiZ texture cache locality and amortises dispatch
-    // overhead over the 32-thread default. Falls back to 32 (one subgroup) when
-    // subgroup support is unavailable. The shader's LOCAL_SIZE is driven by this
-    // define, and queue.glsl's push math is LOCAL_SIZE-parametric, so no shader
-    // change is needed.
     private final int localWorkSizeBits;
 
     private static int resolveLocalWorkSizeBits(VkFrameCtx ctx) {
-        //subgroupSize >= 32 on every conformant Vulkan 1.1+ device; bump to 64
-        // (2 subgroups) when subgroupSize >= 32. Conservative 32 fallback otherwise.
         return ctx.vk().subgroupArithmetic && ctx.vk().subgroupSize >= 32 ? 6 : 5;
     }
 
-    //Bindings (single Vulkan namespace: HiZ sampler at 0, UBO at 1, SSBOs from 2)
     private static final int HIZ_BINDING = 0;
     private static final int SCENE_UNIFORM_BINDING = 1;
     private static final int REQUEST_QUEUE_BINDING = 2;
@@ -75,6 +66,7 @@ public class VkTraversal {
     private final VkShaderPipeline traversal;
 
     private int topNodeCount;
+    private boolean topNodesDirty;
     private final Int2IntOpenHashMap topNode2idxMapping = new Int2IntOpenHashMap();
     private final int[] idx2topNodeMapping = new int[MAX_QUEUE_SIZE];
 
@@ -88,41 +80,74 @@ public class VkTraversal {
         this.meshGen = meshGen;
         this.localWorkSizeBits = resolveLocalWorkSizeBits(ctx);
 
-        this.requestBuffer = new VkBuffer(ctx, MAX_REQUEST_QUEUE_SIZE * 8L + 8).zero();
-        this.nodeBuffer = new VkBuffer(ctx, nodeManager.maxNodeCount * 16L).fill(-1);
-        this.uniformBuffer = new VkBuffer(ctx, 1024).zero();
-        this.topNodeIds = new VkBuffer(ctx, MAX_QUEUE_SIZE * 4L).zero();
-        this.queueMetaBuffer = new VkBuffer(ctx, 4L * 4 * MAX_ITERATIONS).zero();
-        this.scratchQueueA = new VkBuffer(ctx, MAX_QUEUE_SIZE * 4L).zero();
-        this.scratchQueueB = new VkBuffer(ctx, MAX_QUEUE_SIZE * 4L).zero();
-        ctx.flushImmediate();
+        VkBuffer request = null;
+        VkBuffer nodes = null;
+        VkBuffer uniform = null;
+        VkBuffer topIds = null;
+        VkBuffer queueMeta = null;
+        VkBuffer scratchA = null;
+        VkBuffer scratchB = null;
+        VkShaderPipeline traversalPipeline = null;
+        try {
+            request = new VkBuffer(ctx, MAX_REQUEST_QUEUE_SIZE * 8L + 8).zero();
+            nodes = new VkBuffer(ctx, nodeManager.maxNodeCount * 16L).fill(-1);
+            uniform = new VkBuffer(ctx, 1024).zero();
+            topIds = new VkBuffer(ctx, MAX_QUEUE_SIZE * 4L).zero();
+            queueMeta = new VkBuffer(ctx, 4L * 4 * MAX_ITERATIONS).zero();
+            scratchA = new VkBuffer(ctx, MAX_QUEUE_SIZE * 4L).zero();
+            scratchB = new VkBuffer(ctx, MAX_QUEUE_SIZE * 4L).zero();
+            ctx.flushImmediate();
+
+            traversalPipeline = new VkShaderPipeline(ctx, "traversal_dev.comp",
+                    VkShaderSource.load("voxy:lod/hierarchical/traversal_dev.comp", VkShaderSource.defs()
+                            .props(properties)
+                            .def("MAX_ITERATIONS", MAX_ITERATIONS)
+                            .def("LOCAL_SIZE_BITS", this.localWorkSizeBits)
+                            .def("MAX_REQUEST_QUEUE_SIZE", MAX_REQUEST_QUEUE_SIZE)
+                            .def("HIZ_BINDING", HIZ_BINDING)
+                            .def("SCENE_UNIFORM_BINDING", SCENE_UNIFORM_BINDING)
+                            .def("REQUEST_QUEUE_BINDING", REQUEST_QUEUE_BINDING)
+                            .def("RENDER_QUEUE_BINDING", RENDER_QUEUE_BINDING)
+                            .def("NODE_DATA_BINDING", NODE_DATA_BINDING)
+                            .def("NODE_QUEUE_INDEX_BINDING", 0)
+                            .def("NODE_QUEUE_META_BINDING", NODE_QUEUE_META_BINDING)
+                            .def("NODE_QUEUE_SOURCE_BINDING", NODE_QUEUE_SOURCE_BINDING)
+                            .def("NODE_QUEUE_SINK_BINDING", NODE_QUEUE_SINK_BINDING)
+                            .def("RENDER_TRACKER_BINDING", RENDER_TRACKER_BINDING)
+                            .build()),
+                    4,
+                    List.of(VkShaderPipeline.sampler(HIZ_BINDING), VkShaderPipeline.ubo(SCENE_UNIFORM_BINDING),
+                            VkShaderPipeline.ssbo(REQUEST_QUEUE_BINDING), VkShaderPipeline.ssbo(RENDER_QUEUE_BINDING),
+                            VkShaderPipeline.ssbo(NODE_DATA_BINDING), VkShaderPipeline.ssbo(NODE_QUEUE_META_BINDING),
+                            VkShaderPipeline.ssbo(NODE_QUEUE_SOURCE_BINDING), VkShaderPipeline.ssbo(NODE_QUEUE_SINK_BINDING),
+                            VkShaderPipeline.ssbo(RENDER_TRACKER_BINDING)));
+        } catch (RuntimeException | Error failure) {
+            if (traversalPipeline != null) traversalPipeline.free();
+            if (scratchB != null) scratchB.free();
+            if (scratchA != null) scratchA.free();
+            if (queueMeta != null) queueMeta.free();
+            if (topIds != null) topIds.free();
+            if (uniform != null) uniform.free();
+            if (nodes != null) nodes.free();
+            if (request != null) request.free();
+            ctx.waitIdleRetireAll();
+            throw failure;
+        }
+
+        this.requestBuffer = request;
+        this.nodeBuffer = nodes;
+        this.uniformBuffer = uniform;
+        this.topNodeIds = topIds;
+        this.queueMetaBuffer = queueMeta;
+        this.scratchQueueA = scratchA;
+        this.scratchQueueB = scratchB;
+        this.traversal = traversalPipeline;
 
         this.topNode2idxMapping.defaultReturnValue(-1);
+        //Register callbacks only after every GPU resource has been created. A
+        //failed constructor must never leave AsyncNodeManager calling into a
+        //partially constructed traversal object.
         this.nodeManager.setTLNAddRemoveCallbacks(this::addTLN, this::remTLN);
-
-        this.traversal = new VkShaderPipeline(ctx, "traversal_dev.comp",
-                VkShaderSource.load("voxy:lod/hierarchical/traversal_dev.comp", VkShaderSource.defs()
-                        .props(properties)
-                        .def("MAX_ITERATIONS", MAX_ITERATIONS)
-                        .def("LOCAL_SIZE_BITS", this.localWorkSizeBits)
-                        .def("MAX_REQUEST_QUEUE_SIZE", MAX_REQUEST_QUEUE_SIZE)
-                        .def("HIZ_BINDING", HIZ_BINDING)
-                        .def("SCENE_UNIFORM_BINDING", SCENE_UNIFORM_BINDING)
-                        .def("REQUEST_QUEUE_BINDING", REQUEST_QUEUE_BINDING)
-                        .def("RENDER_QUEUE_BINDING", RENDER_QUEUE_BINDING)
-                        .def("NODE_DATA_BINDING", NODE_DATA_BINDING)
-                        .def("NODE_QUEUE_INDEX_BINDING", 0)//unused on VK (push constant)
-                        .def("NODE_QUEUE_META_BINDING", NODE_QUEUE_META_BINDING)
-                        .def("NODE_QUEUE_SOURCE_BINDING", NODE_QUEUE_SOURCE_BINDING)
-                        .def("NODE_QUEUE_SINK_BINDING", NODE_QUEUE_SINK_BINDING)
-                        .def("RENDER_TRACKER_BINDING", RENDER_TRACKER_BINDING)
-                        .build()),
-                4,
-                List.of(VkShaderPipeline.sampler(HIZ_BINDING), VkShaderPipeline.ubo(SCENE_UNIFORM_BINDING),
-                        VkShaderPipeline.ssbo(REQUEST_QUEUE_BINDING), VkShaderPipeline.ssbo(RENDER_QUEUE_BINDING),
-                        VkShaderPipeline.ssbo(NODE_DATA_BINDING), VkShaderPipeline.ssbo(NODE_QUEUE_META_BINDING),
-                        VkShaderPipeline.ssbo(NODE_QUEUE_SOURCE_BINDING), VkShaderPipeline.ssbo(NODE_QUEUE_SINK_BINDING),
-                        VkShaderPipeline.ssbo(RENDER_TRACKER_BINDING)));
     }
 
     private void addTLN(int id) {
@@ -130,7 +155,7 @@ public class VkTraversal {
         if (this.topNodeCount > this.topNodeIds.size() / 4) {
             throw new IllegalStateException("Top level node count greater than capacity");
         }
-        vkCmdFillBuffer(this.ctx.cmd(), this.topNodeIds.buffer, aid * 4L, 4, id);
+        this.topNodesDirty = true;
         if (this.topNode2idxMapping.put(id, aid) != -1) {
             throw new IllegalStateException();
         }
@@ -145,7 +170,7 @@ public class VkTraversal {
         int endTLNId = this.idx2topNodeMapping[this.topNodeCount];
         this.idx2topNodeMapping[idx] = endTLNId;
         if (this.topNode2idxMapping.put(endTLNId, idx) == -1) throw new IllegalStateException();
-        vkCmdFillBuffer(this.ctx.cmd(), this.topNodeIds.buffer, idx * 4L, 4, endTLNId);
+        this.topNodesDirty = true;
     }
 
     private void uploadUniform(Viewport<?> viewport, VkViewport vkViewport) {
@@ -175,13 +200,22 @@ public class VkTraversal {
     }
 
     public void doTraversal(VkViewport viewport) {
+        // Several removals can swap into the same slot during one node-manager
+        // tick. Upload the final CPU list once, avoiding unordered GPU writes.
+        if (this.topNodesDirty) {
+            if (this.topNodeCount > 0) {
+                long ptr = this.uploadStream.upload(this.topNodeIds, 0, this.topNodeCount * 4L);
+                for (int i = 0; i < this.topNodeCount; i++) {
+                    MemoryUtil.memPutInt(ptr + i * 4L, this.idx2topNodeMapping[i]);
+                }
+            }
+            this.topNodesDirty = false;
+        }
         this.uploadUniform(viewport, viewport);
         var cmd = this.ctx.cmd();
 
-        //Clear the render output counter
         vkCmdFillBuffer(cmd, viewport.indirectLookupBuffer.buffer, 0, 4, 0);
 
-        //Prime the per-iteration queue metadata
         int firstDispatchSize = (this.topNodeCount + (1 << this.localWorkSizeBits) - 1) >> this.localWorkSizeBits;
         {
             long ptr = this.uploadStream.upload(this.queueMetaBuffer, 0, 16L * MAX_ITERATIONS);
@@ -197,12 +231,13 @@ public class VkTraversal {
             }
             this.uploadStream.commit();
         }
-        //The upload commit just issued a scoped TRANSFER -> COMPUTE/VERTEX/etc
-        // barrier; this one orders the queueMetaBuffer upload + the
-        // indirectLookupBuffer vkCmdFillBuffer (TRANSFER writes) ahead of the
-        // traversal compute reads. Scoped to TRANSFER -> COMPUTE.
+        //queueMetaBuffer is consumed both as SSBO data by the traversal shader
+        //and as VkDispatchIndirectCommand by vkCmdDispatchIndirect. The latter
+        //requires the DRAW_INDIRECT stage; COMPUTE_SHADER alone is not a valid
+        //destination stage for VK_ACCESS_INDIRECT_COMMAND_READ_BIT.
         this.ctx.barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 
         this.traversal.bind(cmd);
         for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
@@ -234,25 +269,12 @@ public class VkTraversal {
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
                     VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
         }
-        //Traversal compute -> download copy (transfer) + requestBuffer fill.
         this.ctx.computeToTransferBarrier();
 
-        //Download + reset the request queue
         this.downloadStream.download(this.requestBuffer, this::forwardDownloadResult);
-        //WAR: download() already recorded the vkCmdCopyBuffer that READS
-        // requestBuffer, and the fill below WRITES it. Two transfer commands in
-        // one command buffer are not implicitly ordered, so without this barrier
-        // the reset could land before/while the copy reads — zeroing the request
-        // count and silently dropping a frame of node requests. Desktop drivers
-        // serialise blits in practice; Metal's blit encoders need not.
         this.ctx.barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         vkCmdFillBuffer(this.ctx.cmd(), this.requestBuffer.buffer, 0, 4, 0);
-        //The download copy read the requestBuffer (TRANSFER read); the fill
-        // resets it (TRANSFER write). The next reader is next frame's traversal
-        // compute, so this barrier only needs to order TRANSFER -> TRANSFER +
-        // COMPUTE. Removed the previous fullBarrier (ALL_COMMANDS -> ALL_COMMANDS)
-        // which was a full pipeline stall.
         this.ctx.barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
@@ -260,7 +282,7 @@ public class VkTraversal {
 
     private void forwardDownloadResult(long ptr, long size) {
         int count = MemoryUtil.memGetInt(ptr);
-        ptr += 8;//skip the (empty) second value
+        ptr += 8;
         if (count < 0 || count > 50000) {
             Logger.error(new IllegalStateException("Count unexpected extreme value: " + count + " things may get weird"));
             return;
@@ -280,6 +302,8 @@ public class VkTraversal {
     }
 
     public void free() {
+        //Detach callbacks before releasing the buffers they write to.
+        this.nodeManager.setTLNAddRemoveCallbacks(null, null);
         this.traversal.free();
         this.requestBuffer.free();
         this.nodeBuffer.free();

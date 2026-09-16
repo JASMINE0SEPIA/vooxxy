@@ -25,7 +25,14 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientLevel.class)
-public abstract class MixinClientLevel {
+public abstract class MixinClientLevel implements me.cortex.voxy.client.IVoxelUpdateQueue {
+
+    @Unique private final java.util.Set<Long> voxy$pendingSections = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    @Override
+    public void voxy$queueSectionUpdate(SectionPos section) {
+        if (VoxyConfig.CONFIG.ingestEnabled) this.voxy$pendingSections.add(section.asLong());
+    }
 
     @Unique
     private int bottomSectionY;
@@ -51,28 +58,29 @@ public abstract class MixinClientLevel {
     @Inject(method = "setBlocksDirty", at = @At("TAIL"))
     private void voxy$injectIngestOnStateChange(BlockPos pos, BlockState old, BlockState updated, CallbackInfo cir) {
         if (old == updated) return;
+        this.voxy$queueSectionUpdate(SectionPos.of(pos));
+    }
 
-        //TODO: is this _really_ needed, we should have enough processing power to not need todo it if its only a
-        // block removal
-        if (!updated.isAir()) return;
-        if (VoxyCommon.getInstance()==null) return;
-        if (!VoxyConfig.CONFIG.ingestEnabled) return;//Only ingest if setting enabled
-
-        var self = (Level)(Object)this;
-        var wi = WorldIdentifier.of(self);
-        if (wi == null) {
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void voxy$flushSectionUpdates(java.util.function.BooleanSupplier hasTimeLeft, CallbackInfo ci) {
+        if (!VoxyConfig.CONFIG.ingestEnabled || VoxyCommon.getInstance() == null) {
+            this.voxy$pendingSections.clear();
             return;
         }
-
-        int x = pos.getX()&15;
-        int y = pos.getY()&15;
-        int z = pos.getZ()&15;
-        if (x == 0 || x==15 || y==0 || y==15 || z==0||z==15) {//Update if there is a statechange on the boarder
-            var csp = SectionPos.of(pos);
-            //Is not using voxy$cheekyGetChunk as dont think is need
-            var chunk = self.getChunk(pos.getX()>>4, pos.getZ()>>4, ChunkStatus.FULL, false);
-            if (chunk != null) {
-                var section = chunk.getSection(csp.y() - this.bottomSectionY);
+        if (this.voxy$pendingSections.isEmpty()) return;
+        var self = (Level)(Object)this;
+        var wi = WorldIdentifier.of(self);
+        if (wi == null) return;
+        // A fill command or light propagation can dirty one section many times.
+        // Defer snapshots until the tick completes, and bound work per tick.
+        var updates = this.voxy$pendingSections.iterator();
+        for (int remaining = 128; remaining > 0 && updates.hasNext(); remaining--) {
+            var csp = SectionPos.of(updates.next());
+            updates.remove();
+            var chunk = self.getChunk(csp.x(), csp.z(), ChunkStatus.FULL, false);
+            int index = csp.y() - this.bottomSectionY;
+            if (chunk != null && index >= 0 && index < chunk.getSections().length) {
+                var section = chunk.getSection(index);
                 var lp = self.getLightEngine();
 
                 var blp = lp.getLayerListener(LightLayer.BLOCK).getDataLayerData(csp);

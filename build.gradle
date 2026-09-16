@@ -125,8 +125,7 @@ processResources {
     }
     String allowed_mc_version;
     {
-        allowed_mc_version = project.properties.minecraft_version.split("-")[0];
-        allowed_mc_version = "[\">=" + allowed_mc_version + "- <=" + allowed_mc_version + "\", \"~" + allowed_mc_version + "\"]";
+        allowed_mc_version = "[\"=" + project.properties.minecraft_version + "\"]";
     }
 
     var time = buildtime()
@@ -177,6 +176,50 @@ jar {
 
 loom {
     accessWidenerPath = file("src/main/resources/voxy.accesswidener")
+}
+
+// Integration harness is a separate development-only mod, never packaged in Voxy.
+sourceSets {
+    smokeTest {
+        compileClasspath = sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath = output + sourceSets.main.runtimeClasspath
+    }
+}
+configurations {
+    smokeTestImplementation.extendsFrom implementation
+    smokeTestRuntimeOnly.extendsFrom runtimeOnly
+}
+loom {
+    mods {
+        voxy { sourceSet sourceSets.main }
+        voxy_smoketest { sourceSet sourceSets.smokeTest }
+    }
+    runs {
+        smokeClient {
+            client()
+            source sourceSets.smokeTest
+            runDir 'run-smoke'
+            vmArg '-Xmx4G'
+            if (project.hasProperty('lifecycleSmoke')) vmArg '-Dvoxy.smoke.lifecycle=true'
+            if (project.hasProperty('importSmoke')) vmArg '-Dvoxy.smoke.import=true'
+            if (project.hasProperty('syncSmoke')) vmArg '-Dvoxy.smoke.sync=true'
+            if (project.hasProperty('travelSmoke')) vmArg '-Dvoxy.smoke.travel=true'
+            programArg '--offlineDeveloperMode'
+            programArg '--graphicsBackend'
+            programArg 'VULKAN'
+            if (project.hasProperty('validateVulkan')) {
+                programArg '--vulkanValidation'
+                programArg '--renderDebugLabels'
+            }
+        }
+    }
+}
+
+tasks.named('runSmokeClient') {
+    if (project.hasProperty('syncSmoke')) {
+        environment 'VK_KHRONOS_VALIDATION_VALIDATE_SYNC', 'true'
+        environment 'VK_KHRONOS_VALIDATION_DUPLICATE_MESSAGE_LIMIT', '1000'
+    }
 }
 
 def runtimeOnlyMsk = {arg->}
@@ -370,7 +413,7 @@ jar {
     }
 }
 
-project.ext.lwjglVersion = "3.4.1"
+project.ext.lwjglVersion = "3.4.3"
 
 // --- Voxy Vulkan backend deps (optional at runtime; probed via capability detection) ---
 dependencies {
@@ -450,6 +493,8 @@ tasks.register('verifyBlaze3dBackendIsolation') {
                 'org.lwjgl.vulkan',
                 'com.mojang.blaze3d.opengl',
                 'com.mojang.blaze3d.vulkan',
+                'com.mojang.renderpearl.backend.opengl',
+                'com.mojang.renderpearl.backend.vulkan',
                 'me.cortex.voxy.client.core.gl',
                 'me.cortex.voxy.client.core.vk'
         ]

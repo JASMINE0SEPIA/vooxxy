@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "me.cortex.voxy.smoke.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["MixinValidationFeatureSets", "MixinFrameMetrics"],
+  "injectors": {"defaultRequire": 1}
+}

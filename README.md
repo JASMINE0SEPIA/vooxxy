@@ -1,62 +1,58 @@
-# Voxyrium
+# Voxy Vulkan — Minecraft 26.3
 
-A fork of Voxy with native OpenGL/Vulkan renderers and an experimental Blaze3D compatibility renderer. Select the renderer from Voxy's Rendering settings.
+独立本地移植仓库，目标是 **Minecraft Java 26.3 正式版的原生 Vulkan 后端**。
+已在 RTX 5060 Laptop 上通过真实世界中的原生 Vulkan 远景绘制、缓存恢复、
+OIT、资源重载及三个原版维度往返测试。当前仍为开发版本，验证范围见
+[实机记录](docs/VALIDATION-26.3.md)，不承诺所有显卡和模组组合均已验证。
 
-## Changes
+基于 Voxyrium，合入社区 Vulkan 资源生命周期、VMA 分配与同步修复，
+并保留官方 Voxy 的存储、区块摄入、模型烘焙、层级 LOD、远景与配置功能。
+方块放置、移除和光照变化会按区段合并更新到远景缓存。
+26.3 使用 RenderPearl 和 SDL，已经迁移对应 Java API；远景绘制在实体及
+不透明地形之后、经典透明或 OIT 之前结束并恢复 Minecraft 的渲染通道。
 
-* **Full Vulkan support**, based on [MCRcortex/voxy#614](https://github.com/MCRcortex/voxy/pull/614) by `cochcoder`.
-* **Intel Mac support** in addition to Apple Silicon.
-* Additional **MoltenVK-specific fixes**.
-* Fixed gaps between blocks in **flowing water and flowing lava** in Voxy chunks.
-* Added an alternative **Blaze3D-only renderer**, written from scratch without direct OpenGL or Vulkan calls.
+## 构建
 
-## Blaze3D Renderer (Experimental)
+需要 JDK 25，使用仓库内 Gradle Wrapper：
 
-The alternative renderer uses only Minecraft 26.2's public **Blaze3D API**. It should therefore run on any device capable of Minecraft's minimum graphics requirements, including **OpenGL 3.3** hardware.
+```powershell
+.\scripts\Build-26.3.ps1
+```
 
-Its goal is to reproduce Voxy's rendering and performance as closely as possible while remaining completely independent of the underlying graphics API.
+脚本仅在当前进程里将 `HTTPS_PROXY` 传给 Java。输出位于 `build/libs/`。
+Minecraft 26.3、Fabric Loader 0.19.5、Fabric API 0.160.6+26.3、
+Sodium 0.9.2 的 Fabric 26.3 版本为基准依赖；LWJGL 与游戏对齐到 3.4.3。
 
-There is, however, a fundamental performance ceiling: Blaze3D does not expose enough of the GPU to reproduce Voxy's native GPU-driven pipeline.
+## 隔离验证
 
-| GPU feature                       | Blaze3D 26.2 | Limitation                                                            |
-| --------------------------------- | ------------ | --------------------------------------------------------------------- |
-| Vertex/index/uniform/copy buffers | ✅            | Fully usable                                                          |
-| Indirect command buffers          | ⚠️           | `drawIndexedIndirect(...)`, but one command per call                  |
-| Multi-draw indirect               | ❌            | No `glMultiDraw*Indirect` / Vulkan equivalent                         |
-| GPU-generated draw count          | ❌            | No `glMultiDraw*IndirectCount` / `vkCmdDraw*IndirectCount` equivalent |
-| Compute shaders                   | ❌            | No compute pipelines, `dispatch` or `dispatchIndirect`                |
-| SSBO / storage buffers            | ❌            | No public shader-storage buffer abstraction                           |
-| Storage images                    | ❌            | No image load/store abstraction                                       |
-| Explicit synchronization          | ❌            | No programmable compute/storage/indirect barriers                     |
-| GPU-driven Hi-Z traversal         | ❌            | Hi-Z can be raster-generated, but cannot drive a compute traversal    |
+```powershell
+.\scripts\Build-26.3.ps1 -Smoke
+# 安装 Vulkan SDK 的校验层后，运行完整的同步/生命周期/导入/移动检查：
+.\scripts\Build-26.3.ps1 -Smoke -SyncValidation -Lifecycle -Import -Travel
+```
 
-Consequently, the Blaze3D renderer cannot reproduce several techniques available to Voxy's native **OpenGL 4.6** and **Vulkan** backends:
+独立测试模组仅存在于 `smokeTest` 源集，不打入 Voxy JAR。
+游戏数据写入 `run-smoke/`，固定种子存档与截图都保存在该目录。
+测试会自动创建或重开存档、移动观察点、保存截图并退出。
+首次先运行基本测试以生成导入样本。完整测试只复制该测试存档的区域文件，
+不会读取或写入 PCL 实例。脚本保存日志到 `artifacts/` 并检查失败标记。
+同步检查会在测试模组内关闭 Minecraft 自身的 GPU 崩溃标记写入，以避开其
+已有的同步报错；不关闭 Voxy 校验，也不会把这项测试改动打入发布 JAR。
 
-* GPU compute culling and traversal
-* GPU-generated indirect draw lists
-* Multi-draw indirect submission
-* GPU-generated draw counts
-* SSBO-based scene/visibility data
-* Storage-image compute workloads
-* Explicit synchronization between compute, transfer and indirect rendering stages
+本仓库不修改 `C:\Program Files also\PCL`。实际游玩请另外创建 26.3 测试实例，
+安装构建出的 `voxy-vulkan-*.jar`、上述 Fabric API 和 Sodium，并在游戏设置中
+选择 Vulkan 后重启，或使用游戏启动参数 `--graphicsBackend VULKAN`。
 
-These limitations require more work to remain on the CPU and/or more individual draw submissions.
+只验证 Minecraft 自带 Vulkan + 原生 Voxy 渲染路径。
+保留的 OpenGL/Blaze3D 兼容代码及第三方 shader/VR/replay 集成未声明为
+26.3 可用；旧的 Sodium OpenGL 通道注入已从此次注册清单移除。
 
-The Blaze3D backend should therefore be considered a **portable compatibility renderer**, not a replacement for the native backends. It aims to approach native Voxy performance and visual fidelity as closely as Blaze3D permits.
+同机位远景开关对照与实机截图：[开启](docs/evidence/lod-on.png)、
+[关闭](docs/evidence/lod-off.png)、[OIT](docs/evidence/oit.png)、
+[下界](docs/evidence/nether.png)、[末地](docs/evidence/end.png)。
+这是已访问地形的 LOD 缓存，不会自动生成从未加载过的无限地形。
 
-## Rendering Backends
+## 来源
 
-| Backend     | Requirements                               | GPU-driven capabilities | Expected performance          |
-| ----------- | ------------------------------------------ | ----------------------- | ----------------------------- |
-| **OpenGL**  | Voxy native requirements                   | Full                    | Best                          |
-| **Vulkan**  | Vulkan / MoltenVK                          | Full                    | Best                          |
-| **Blaze3D** | Minecraft-compatible GPU, including GL 3.3 | Limited by Blaze3D      | Lower, compatibility-oriented |
-
-## Credits
-
-Original project: [MCRcortex/voxy](https://github.com/MCRcortex/voxy)
-
-Vulkan support is based on [PR #614](https://github.com/MCRcortex/voxy/pull/614) by `cochcoder`.
-
-See [LICENSE.md](LICENSE.md) for licensing information.
-
+完整来源与固定提交见 [移植记录](docs/PORTING-26.3.md)。
+上游授权见 [LICENSE.md](LICENSE.md)，本地开发不改变上游授权。

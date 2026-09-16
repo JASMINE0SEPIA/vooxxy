@@ -3,6 +3,10 @@
 /.idea/
 /build/
 /run/
+/run-smoke/
 /out/
 /logs/
+/.tools/
+/*.log
+/artifacts/
 /compatibility-builds/

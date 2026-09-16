@@ -149,23 +149,20 @@ public abstract class VoxyInstance {
             return world;
         }
         long stamp = this.activeWorldLock.writeLock();
-
-        if (!this.isRunning) {
-            Logger.error("Tried getting world object on voxy instance but its not running");
+        try {
+            if (!this.isRunning) {
+                Logger.error("Tried getting world object on voxy instance but its not running");
+                return null;
+            }
+            world = this.activeWorlds.get(identifier);
+            if (world == null) world = this.createWorld(identifier);
+            world.markActive();
+            if (incrementRef) world.acquireRef();
+        } finally {
+            // Storage/codec errors must not strand the world cleaner on this
+            // lock while the render thread joins it during disconnect.
             this.activeWorldLock.unlockWrite(stamp);
-            return null;
         }
-
-        world = this.activeWorlds.get(identifier);
-        if (world == null) {
-            //Create world here
-            world = this.createWorld(identifier);
-        }
-        world.markActive();
-
-        if (incrementRef) world.acquireRef();
-
-        this.activeWorldLock.unlockWrite(stamp);
         identifier.cachedEngineObject = new WeakReference<>(world);
         return world;
     }
@@ -181,7 +178,14 @@ public abstract class VoxyInstance {
             throw new IllegalStateException("Existing world with identifier");
         }
         Logger.info("Creating new world engine: " + identifier.getLongHash() + "@" + System.identityHashCode(this));
-        var world = new WorldEngine(this.createStorage(identifier), this);
+        var storage = this.createStorage(identifier);
+        final WorldEngine world;
+        try {
+            world = new WorldEngine(storage, this);
+        } catch (RuntimeException | Error failure) {
+            try { storage.close(); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
         world.setSaveCallback(this.savingService::enqueueSave);
         this.activeWorlds.put(identifier, world);
         return world;

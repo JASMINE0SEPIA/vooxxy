@@ -1,5 +1,6 @@
 {
   "required": true,
+  "plugin": "me.cortex.voxy.VoxyMixinPlugin",
   "package": "me.cortex.voxy.client.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [
@@ -32,15 +33,17 @@
     "sodium.AccessorChunkTracker",
     "sodium.AccessorSodiumWorldRenderer",
     "sodium.MixinChunkJobQueue",
-    "sodium.MixinDefaultChunkRenderer",
     "sodium.MixinFallbackVisibleChunkCollector",
     "sodium.MixinRenderRegionManager",
     "sodium.MixinRenderSectionManager",
     "sodium.MixinSodiumWorldRenderer",
     "sodium.MixinVisibleChunkCollector",
     "vk.AccessorVulkanCommandEncoder",
+    "vk.AccessorVulkanDevice",
+    "vk.MixinLevelRendererVkFrame",
     "vk.MixinSodiumOpaqueVkFrame",
-    "vk.MixinVulkanDevice"
+    "vk.MixinVulkanDevice",
+    "vk.MixinVulkanFeatureSets"
   ],
   "injectors": {
     "defaultRequire": 1

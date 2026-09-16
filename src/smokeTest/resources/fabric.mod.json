@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "voxy_smoketest",
+  "version": "1.0.0",
+  "name": "Voxy Vulkan integration harness",
+  "environment": "client",
+  "mixins": ["voxy.smoke.mixins.json"],
+  "entrypoints": {"client": ["me.cortex.voxy.smoke.VulkanSmokeClient"]},
+  "depends": {"voxy": "*", "fabric-api": "*"}
+}
