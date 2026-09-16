@@ -7,6 +7,7 @@ layout(binding = 1, std140) uniform CompositeParams {
     mat4 projMat;
     vec4 endParams;
     vec4 fogColour;
+    vec4 fadeParams;
 };
 #ifdef EMIT_COLOUR
 layout(binding = 3) uniform sampler2D colourTex;

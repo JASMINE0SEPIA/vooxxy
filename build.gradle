@@ -204,6 +204,7 @@ loom {
             if (project.hasProperty('importSmoke')) vmArg '-Dvoxy.smoke.import=true'
             if (project.hasProperty('syncSmoke')) vmArg '-Dvoxy.smoke.sync=true'
             if (project.hasProperty('travelSmoke')) vmArg '-Dvoxy.smoke.travel=true'
+            if (project.hasProperty('fogSmoke')) vmArg '-Dvoxy.smoke.fog=true'
             programArg '--offlineDeveloperMode'
             programArg '--graphicsBackend'
             programArg 'VULKAN'

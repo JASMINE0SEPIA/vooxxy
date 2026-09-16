@@ -112,7 +112,7 @@ public class VkRenderCore {
             cleaner = new VkNodeCleaner(frame, upload, download, nodes);
             traverse = new VkTraversal(frame, upload, download, props, nodes, cleaner, generation);
             terrain = new VkTerrainRenderer(frame, upload, download, props, geometry, models);
-            compose = new VkCompositor(frame, upload, props, VoxyConfig.CONFIG.getFogMode().hasFog);
+            compose = new VkCompositor(frame, upload, props, VoxyConfig.CONFIG.getFogMode());
             ao = new VkSSAO(frame, upload, props, VoxyConfig.CONFIG.getSSAOMode());
             final VkFrameCtx selectedFrame = frame;
             visible = new StreamedBoundStore(size -> new VkBuffer(selectedFrame, size));

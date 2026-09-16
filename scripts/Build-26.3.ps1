@@ -1,6 +1,7 @@
 [CmdletBinding()]
-param([switch]$Smoke, [switch]$ValidateVulkan, [switch]$Lifecycle, [switch]$Import, [switch]$SyncValidation, [switch]$Travel)
+param([switch]$Smoke, [switch]$ValidateVulkan, [switch]$Lifecycle, [switch]$Import, [switch]$SyncValidation, [switch]$Travel, [switch]$Fog)
 $ErrorActionPreference = 'Stop'
+if ($Fog -and ($Lifecycle -or $Import -or $Travel)) { throw 'Run -Fog separately from -Lifecycle, -Import and -Travel.' }
 $root = Split-Path -Parent $PSScriptRoot
 $previousJavaOptions = $env:JAVA_TOOL_OPTIONS
 Push-Location $root
@@ -31,6 +32,7 @@ soundCategory_master:0.0
         $smokeArgs = @('runSmokeClient', '--console=plain')
         if ($ValidateVulkan -or $SyncValidation) { $smokeArgs += '-PvalidateVulkan' }
         if ($SyncValidation) { $smokeArgs += '-PsyncSmoke' }
+        if ($Fog) { $smokeArgs += '-PfogSmoke' }
         if ($Lifecycle) { $smokeArgs += '-PlifecycleSmoke' }
         if ($Travel) { $smokeArgs += '-PlifecycleSmoke'; $smokeArgs += '-PtravelSmoke' }
         if ($Import) {
@@ -47,7 +49,11 @@ soundCategory_master:0.0
         $smokeLog = Join-Path $root ('artifacts/smoke-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
         & .\gradlew.bat @smokeArgs 2>&1 | Tee-Object -FilePath $smokeLog
         if ($LASTEXITCODE -ne 0) { throw "Vulkan smoke client failed ($LASTEXITCODE)" }
-        & (Join-Path $PSScriptRoot 'Verify-SmokeLog.ps1') -Path $smokeLog -Lifecycle:$Lifecycle -Import:$Import -Travel:$Travel -SyncValidation:$SyncValidation
+        if ($Fog) {
+            & (Join-Path $PSScriptRoot 'Verify-FogLog.ps1') -Path $smokeLog
+        } else {
+            & (Join-Path $PSScriptRoot 'Verify-SmokeLog.ps1') -Path $smokeLog -Lifecycle:$Lifecycle -Import:$Import -Travel:$Travel -SyncValidation:$SyncValidation
+        }
     }
 } finally {
     Pop-Location

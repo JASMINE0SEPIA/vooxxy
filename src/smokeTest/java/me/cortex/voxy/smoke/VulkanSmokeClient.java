@@ -28,6 +28,7 @@ public final class VulkanSmokeClient implements ClientModInitializer {
     private final boolean importTest = Boolean.getBoolean("voxy.smoke.import");
     private WorldImportProbe importProbe;
     private final boolean travel = Boolean.getBoolean("voxy.smoke.travel");
+    private final FogSmokeProbe fogProbe = Boolean.getBoolean("voxy.smoke.fog") ? new FogSmokeProbe() : null;
 
     @Override
     public void onInitializeClient() {
@@ -66,6 +67,7 @@ public final class VulkanSmokeClient implements ClientModInitializer {
             throw new IllegalStateException("Native Vulkan frame failed; see preceding renderer error");
         }
         worldTicks++;
+        if (fogProbe != null) { fogProbe.tick(client, worldTicks); return; }
         if (importTest && worldTicks == 100) importProbe = new WorldImportProbe(client.level, Path.of("import-fixture"));
         if (importTest && worldTicks == 350) importProbe.verifyAndClose();
         if (worldTicks == 80) {

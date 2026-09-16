@@ -10,6 +10,9 @@
 OIT、资源重载及三个原版维度往返测试。当前仍为开发版本，验证范围见
 [实机记录](docs/VALIDATION-26.3.md)，不承诺所有显卡和模组组合均已验证。
 
+`0.2.20-26.3-vulkan.2-dev` 修复 Vulkan 远景缺失环境雾以及末端渐隐的问题，
+见 [修复说明与同机位对比](docs/FOG-FIX-26.3.md)。
+
 基于 Voxyrium，合入社区 Vulkan 资源生命周期、VMA 分配与同步修复，
 并保留官方 Voxy 的存储、区块摄入、模型烘焙、层级 LOD、远景与配置功能。
 方块放置、移除和光照变化会按区段合并更新到远景缓存。
@@ -34,6 +37,8 @@ Sodium 0.9.2 的 Fabric 26.3 版本为基准依赖；LWJGL 与游戏对齐到 3.
 .\scripts\Build-26.3.ps1 -Smoke
 # 安装 Vulkan SDK 的校验层后，运行完整的同步/生命周期/导入/移动检查：
 .\scripts\Build-26.3.ps1 -Smoke -SyncValidation -Lifecycle -Import -Travel
+# 单独运行雾与远景渐隐场景：
+.\scripts\Build-26.3.ps1 -Smoke -Fog -SyncValidation
 ```
 
 独立测试模组仅存在于 `smokeTest` 源集，不打入 Voxy JAR。

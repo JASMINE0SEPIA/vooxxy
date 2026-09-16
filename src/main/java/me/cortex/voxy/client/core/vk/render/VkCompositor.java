@@ -2,6 +2,8 @@ package me.cortex.voxy.client.core.vk.render;
 
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import me.cortex.voxy.client.core.RenderProperties;
+import me.cortex.voxy.client.core.NormalRenderPipeline.FogMode;
+import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.client.core.vk.VkBuffer;
 import me.cortex.voxy.client.core.vk.VkCmd;
@@ -39,7 +41,7 @@ public class VkCompositor {
     private final VkFrameCtx ctx;
     private final VkUploadStream uploadStream;
     private final RenderProperties properties;
-    private final boolean useEnvFog;
+    private final FogMode fogMode;
 
     private final VkBuffer compositeParams;
     private final long depthSampler;
@@ -52,11 +54,11 @@ public class VkCompositor {
 
     private final Matrix4f scratchA = new Matrix4f();
 
-    public VkCompositor(VkFrameCtx ctx, VkUploadStream uploadStream, RenderProperties properties, boolean useEnvFog) {
+    public VkCompositor(VkFrameCtx ctx, VkUploadStream uploadStream, RenderProperties properties, FogMode fogMode) {
         this.ctx = ctx;
         this.uploadStream = uploadStream;
         this.properties = properties;
-        this.useEnvFog = useEnvFog;
+        this.fogMode = fogMode;
 
         VkBuffer createdParams = null;
         long createdDepthSampler;
@@ -115,7 +117,10 @@ public class VkCompositor {
         d.vertGlsl = VkShaderSource.load("voxy:post/fullscreen2.vert", VkShaderSource.defs().props(this.properties).build());
         d.fragGlsl = VkShaderSource.load("voxy:post/blit_texture_depth_cutout.frag", VkShaderSource.defs().props(this.properties)
                 .def("EMIT_COLOUR")
-                .defIf("USE_ENV_FOG", this.useEnvFog)
+                // These names are the shared shader contract. USE_ENV_FOG was
+                // never consumed, silently compiling all Vulkan LOD fog out.
+                .defIf("HAS_FOG", this.fogMode.hasFog)
+                .defIf("HAS_FADE", this.fogMode.hasFade)
                 .build());
         d.colorFormat = mcColorFormat;
         d.depthFormat = mcDepthFormat;
@@ -239,7 +244,7 @@ public class VkCompositor {
             this.scratchA.set(viewport.MVP).invert().getToAddress(ptr); ptr += 64;
             this.scratchA.set(viewport.vanillaProjection).mul(viewport.modelView).getToAddress(ptr); ptr += 64;
             float e0 = 0, e1 = 0, e2 = 0, f0 = 0, f1 = 0, f2 = 0, f3 = 0;
-            if (this.useEnvFog && viewport.fogParameters != null) {
+            if (this.fogMode.hasFog && viewport.fogParameters != null) {
                 float start = viewport.fogParameters.environmentalStart();
                 float endF = viewport.fogParameters.environmentalEnd();
                 if (Math.abs(endF - start) > 1) {
@@ -264,6 +269,25 @@ public class VkCompositor {
             MemoryUtil.memPutFloat(ptr + 4, f1);
             MemoryUtil.memPutFloat(ptr + 8, f2);
             MemoryUtil.memPutFloat(ptr + 12, f3);
+            ptr += 16;
+            float fadeMode = 0f, fadeOffset = 0f, fadeScale = 0f;
+            if (this.fogMode.hasFade) {
+                // Same horizontal-distance fade as the OpenGL path. Fade only
+                // at the LOD horizon, never at the vanilla/LOD handoff.
+                float distance = VoxyConfig.CONFIG.sectionRenderDistance * 16f * 32f - (float) Math.sqrt(32 * 32);
+                float vanilla = VoxyRenderSystem.getVanillaRenderDistance();
+                float start = Math.max(vanilla, distance * 0.9f);
+                float end = Math.max(vanilla, distance);
+                if (end > start) {
+                    fadeMode = 1f;
+                    fadeScale = 1f / (end - start);
+                    fadeOffset = -start * fadeScale;
+                }
+            }
+            MemoryUtil.memPutFloat(ptr, fadeMode);
+            MemoryUtil.memPutFloat(ptr + 4, fadeOffset);
+            MemoryUtil.memPutFloat(ptr + 8, fadeScale);
+            MemoryUtil.memPutFloat(ptr + 12, 0f);
             this.uploadStream.commit();
         }
 
