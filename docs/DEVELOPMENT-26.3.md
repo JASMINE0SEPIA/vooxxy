@@ -28,8 +28,10 @@ OIT、资源重载及三个原版维度往返测试。当前仍为开发版本�
 ```
 
 脚本仅在当前进程里将 `HTTPS_PROXY` 传给 Java。输出位于 `build/libs/`。
-Minecraft 26.3、Fabric Loader 0.19.5、Fabric API 0.160.6+26.3、
-Sodium 0.9.2 的 Fabric 26.3 版本为基准依赖；LWJGL 与游戏对齐到 3.4.3。
+Minecraft 26.3、Fabric Loader 0.19.5、Fabric API 0.161.0+26.3、
+Sodium 0.9.3-alpha.1 的 Fabric 26.3 版本为基准依赖；同时允许 Sodium 0.9.2。
+兼容范围和 Iris 的 Vulkan 启动限制见 [Sodium 更新记录](SODIUM-0.9.3.md)。
+LWJGL 与游戏对齐到 3.4.3。
 
 ## 隔离验证
 
