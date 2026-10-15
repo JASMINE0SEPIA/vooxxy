@@ -28,7 +28,7 @@ state. Epoch changes invalidate a prior world session. Provider uploads have a
 submission retirement boundary even when no Voxy raster frame executes.
 
 `CausticaBridge.pollScene` advances the provider at client tick start and exposes
-the complete immutable API 5 scene to gysf. The consumer copies CPU data and
+the immutable versioned scene to gysf. The consumer copies CPU data and
 borrows the atlas image view. Atlas upload barriers include ray-tracing shader
 reads when an external RT renderer is active. The legacy `poll` colour-proxy
 adapter remains available for older consumers and controlled comparisons.
@@ -61,7 +61,7 @@ coarse voxel aggregation remains a separate geometry limitation.
 gysf 0.5.0 discovers this method optionally and keeps API 5 fallback support.
 `gysf.voxy.legacyFluidHeights=true` is a startup-only geometry control. Its
 isolated smoke probe checks a known still-water cell through provider export,
-reflection copy and actual RT vertex packing; requesting
+reflection copy and production RT corner conversion; requesting
 `gysf.smoke.requirePreciseFluids=true` makes missing or inaccurate precise data
 a validation failure.
 
@@ -115,3 +115,21 @@ micromap check in the installed SDK validation layer, documented in gysf's
 
 This verifies startup, data flow and lifecycle, not final textured/PBR fidelity
 or a performance target. PCL mods and saves are outside these tests.
+
+## API 6 verification, 2026-10-15
+
+Provider Vulkan 7 passes all 32 Java tests and the standalone Sodium Vulkan
+lifecycle/synchronization smoke. That run verifies live edits, 38,303 block-state
+round trips, a disabled-renderer control and rebuild, resource reload, dimension
+return, save and shutdown. No Vulkan validation findings occur and all Voxy GPU
+resource wrappers are released. The smoke control now disables the desired
+rendering state too, so terrain invalidation cannot recreate a renderer during
+the intentionally disabled interval; production creation guards are unchanged.
+
+gysf 0.5.0 passes 161 Java tests. Its isolated provider-to-consumer still-water
+probe measures Y=111.888885 with API 6, equal to the near-mesher FP32 height for
+that fixture. The legacy-height control measures Y=111.875, an error of
+0.013885498 blocks. This demonstrates removal of one quantization discontinuity,
+not universal near/far geometry equivalence. Full run details and limitations
+are recorded in the paired project's validation document. No player instance
+is part of these checks.

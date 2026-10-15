@@ -23,6 +23,7 @@ public final class VulkanSmokeClient implements ClientModInitializer {
     private boolean opened;
     private int ticks;
     private int worldTicks;
+    private boolean renderingBeforeControl;
     private final boolean lifecycle = Boolean.getBoolean("voxy.smoke.lifecycle");
     private java.util.concurrent.CompletableFuture<Void> reload;
     private final boolean importTest = Boolean.getBoolean("voxy.smoke.import");
@@ -112,10 +113,16 @@ public final class VulkanSmokeClient implements ClientModInitializer {
         if (worldTicks == 500) client.player.connection.sendCommand("tp @s 384 150 0 90 20");
         if (worldTicks == 820) {
             System.out.println("VOXY_SMOKE: disabling LOD renderer for same-camera visual control");
+            renderingBeforeControl=me.cortex.voxy.client.config.VoxyConfig.CONFIG.enableRendering;
+            // Keep the desired state disabled too: Sodium may invalidate terrain during the control.
+            me.cortex.voxy.client.config.VoxyConfig.CONFIG.enableRendering=false;
             IVoxyRenderSystemHolder.getNullableHolder().voxy$shutdownRenderer();
         }
+        if (worldTicks == 900 && IVoxyRenderSystemHolder.getNullable() != null)
+            throw new IllegalStateException("Visual control recreated a disabled Voxy renderer");
         if (worldTicks == 940) {
             System.out.println("VOXY_SMOKE: rebuilding native LOD renderer");
+            me.cortex.voxy.client.config.VoxyConfig.CONFIG.enableRendering=renderingBeforeControl;
             IVoxyRenderSystemHolder.getNullableHolder().voxy$createRenderer();
         }
         if (lifecycle) {
