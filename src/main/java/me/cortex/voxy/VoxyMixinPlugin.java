@@ -12,11 +12,12 @@ public final class VoxyMixinPlugin implements IMixinConfigPlugin {
     @Override public void onLoad(String mixinPackage) {}
     @Override public String getRefMapperConfig() { return null; }
     @Override public boolean shouldApplyMixin(String target, String mixin) {
-        for (String mod : List.of("iris", "flashback", "nvidium", "chunky")) {
+        for (String mod : List.of("iris", "flashback", "nvidium", "chunky", "sodium")) {
             if (mixin.contains(".mixin." + mod + ".")) {
                 return FabricLoader.getInstance().isModLoaded(mod);
             }
         }
+        if (mixin.endsWith("MixinSodiumOpaqueVkFrame")) return FabricLoader.getInstance().isModLoaded("sodium");
         return true;
     }
     @Override public void acceptTargets(Set<String> mine, Set<String> others) {}

@@ -45,7 +45,8 @@ public class VoxyClientInstance extends VoxyInstance {
     @Override
     public void updateDedicatedThreads() {
         int target = VoxyConfig.CONFIG.serviceThreads;
-        if (!VoxyConfig.CONFIG.dontUseSodiumBuilderThreads) {
+        if (net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("sodium")
+                && !VoxyConfig.CONFIG.dontUseSodiumBuilderThreads) {
             var swr = SodiumWorldRenderer.instanceNullable();
             if (swr != null) {
                 var rsm = ((AccessorSodiumWorldRenderer) swr).getRenderSectionManager();

@@ -20,7 +20,7 @@ public class MixinSodiumOpaqueVkFrame {
             ChunkRenderMatrices matrices, double x, double y, double z,
             GpuSampler sampler, OitStage stage, CallbackInfo ci) {
         if (group == ChunkSectionLayerGroup.OPAQUE) {
-            VkFrameBridge.capture(matrices, x, y, z);
+            VkFrameBridge.capture(new me.cortex.voxy.client.core.rendering.RenderMatrices(matrices.projection(), matrices.modelView()), x, y, z);
         }
     }
 }

@@ -4,7 +4,7 @@ import me.cortex.voxy.client.core.RenderProperties;
 import me.cortex.voxy.client.core.gl.GlBuffer;
 import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.rendering.util.HiZBuffer;
-import net.caffeinemc.mods.sodium.client.util.FogParameters;
+import me.cortex.voxy.client.core.rendering.FogParameters;
 import net.minecraft.util.Mth;
 import org.joml.*;
 
@@ -104,6 +104,11 @@ public abstract class Viewport <A extends Viewport<A>> {
         this.width = width;
         this.height = height;
         return (A) this;
+    }
+
+    public A setFogParameters(net.caffeinemc.mods.sodium.client.util.FogParameters fog) {
+        return setFogParameters(new FogParameters(fog.red(),fog.green(),fog.blue(),fog.alpha(),
+                fog.environmentalStart(),fog.environmentalEnd(),fog.renderStart(),fog.renderEnd()));
     }
 
     public A setFogParameters(FogParameters fogParameters) {

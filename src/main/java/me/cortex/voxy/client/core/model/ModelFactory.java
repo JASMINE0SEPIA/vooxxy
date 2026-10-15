@@ -344,11 +344,14 @@ public class ModelFactory {
         private final MemoryBuffer texture = new MemoryBuffer((2L*3*computeSizeWithMips(MODEL_TEXTURE_SIZE))*4);
 
         public int modelId = -1;
+        private BlockState state;
 
         public int biomeUploadIndex = -1;
         public @Nullable MemoryBuffer biomeUpload;
 
         public void upload(IModelStore store) {//Uploads and resets for reuse
+            store.exportModel(this.modelId, this.model, this.state);
+            if (this.biomeUploadIndex != -1 && this.biomeUpload != null) store.exportColours(this.biomeUploadIndex, this.biomeUpload);
             store.uploadModelData(this.modelId, this.model, this.biomeUploadIndex, this.biomeUpload, this.texture);
             this.modelId = -1;
         }
@@ -659,6 +662,8 @@ public class ModelFactory {
 
         //glGenerateTextureMipmap(this.textures.id);
 
+        uploadResult.state = blockState;
+
         // Publish the complete CPU model before exposing the mapping to RenderDataFactory.
         this.storage.stageModelData(modelId, uploadResult.model, uploadResult.biomeUploadIndex,
                 uploadResult.biomeUpload, uploadResult.texture);
@@ -693,6 +698,11 @@ public class ModelFactory {
         }
 
         public void upload(IModelStore store) {
+            store.exportColours(0, this.biomeColourBuffer);
+            for (long offset = 0; offset < this.modelBiomeIndexPairs.size; offset += 8) {
+                long pair = MemoryUtil.memGetLong(this.modelBiomeIndexPairs.address + offset);
+                store.exportColourIndex((int) pair, (int) (pair >>> 32));
+            }
             store.uploadBiomeData(this.biomeColourBuffer, this.modelBiomeIndexPairs);
         }
 

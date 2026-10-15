@@ -102,6 +102,8 @@ public class Serialization {
         int count = 0;
         outer:
         for (var clzName : clazzs) {
+            // Configuration screens are not storage serializers and may require absent optional mods.
+            if (clzName.startsWith("me.cortex.voxy.client.config.")) continue;
             if (VoxyCommon.IS_DEDICATED_SERVER&&clzName.startsWith("me.cortex.voxy.client")) {
                 continue;//Dont load stuff from client path when were on a dedicated server
             }

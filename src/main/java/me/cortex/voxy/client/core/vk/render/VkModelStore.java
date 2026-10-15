@@ -27,6 +27,38 @@ import static org.lwjgl.vulkan.VK10.*;
 //the upload staging buffer with vkCmdCopyBufferToImage per mip; the batch is
 //bracketed by TRANSFER_DST <-> SHADER_READ_ONLY transitions.
 public class VkModelStore implements IModelStore {
+    private final me.cortex.voxy.api.LodModel[] exportedModels = new me.cortex.voxy.api.LodModel[1 << 16];
+    private final int[] exportedColours = new int[1 << 16];
+    public long exportRevision;
+
+    @Override
+    public void exportModel(int id, MemoryBuffer data, net.minecraft.world.level.block.state.BlockState state) {
+        long p = data.address;
+        exportedModels[id] = new me.cortex.voxy.api.LodModel(id,
+                MemoryUtil.memGetInt(p), MemoryUtil.memGetInt(p + 4), MemoryUtil.memGetInt(p + 8),
+                MemoryUtil.memGetInt(p + 12), MemoryUtil.memGetInt(p + 16), MemoryUtil.memGetInt(p + 20),
+                MemoryUtil.memGetInt(p + 24), MemoryUtil.memGetInt(p + 28), state);
+        exportRevision++;
+    }
+
+    @Override
+    public void exportColours(int first, MemoryBuffer data) {
+        MemoryUtil.memIntBuffer(data.address, Math.toIntExact(data.size / 4)).get(exportedColours, first, Math.toIntExact(data.size / 4));
+        exportRevision++;
+    }
+
+    @Override
+    public void exportColourIndex(int id, int index) {
+        var m = exportedModels[id];
+        if (m != null) exportedModels[id] = new me.cortex.voxy.api.LodModel(id, m.down(), m.up(), m.north(), m.south(), m.west(), m.east(), m.flags(), index, m.state());
+        exportRevision++;
+    }
+
+    public me.cortex.voxy.api.LodModel exportedModel(int id) { return exportedModels[id]; }
+    public int exportedColour(int id) { return exportedColours[id]; }
+    public long exportedAtlasView() { return atlas.view; }
+    public int averageColour(int model) { return averageColours[model]; }
+    private final int[] averageColours = new int[1 << 16];
     private static final String ATLAS_MIP_BIAS_PROPERTY = "voxy.vk.modelAtlasMipBias";
 
     private final VkFrameCtx ctx;
@@ -201,6 +233,12 @@ public class VkModelStore implements IModelStore {
 
     @Override
     public void uploadModelTexture(int modelId, MemoryBuffer texture) {
+        long redSum=0,g=0,b=0,a=0,weight=0;
+        for (int i=0; i<ModelFactory.MODEL_TEXTURE_SIZE*ModelFactory.MODEL_TEXTURE_SIZE*6; i++) {
+            int color=MemoryUtil.memGetInt(texture.address+i*4L), alpha=color>>>24;
+            redSum+=(color&255L)*alpha; g+=((color>>>8)&255L)*alpha; b+=((color>>>16)&255L)*alpha; a+=alpha; weight+=alpha;
+        }
+        averageColours[modelId]=weight==0 ? 0 : (int)(redSum/weight) | (int)(g/weight)<<8 | (int)(b/weight)<<16 | (int)(a/(ModelFactory.MODEL_TEXTURE_SIZE*ModelFactory.MODEL_TEXTURE_SIZE*6))<<24;
         if (!this.inUploadBatch) throw new IllegalStateException("Texture upload outside batch");
         final int TS = ModelFactory.MODEL_TEXTURE_SIZE;
         int X = (modelId & 0xFF) * this.atlasTileSize * 3;

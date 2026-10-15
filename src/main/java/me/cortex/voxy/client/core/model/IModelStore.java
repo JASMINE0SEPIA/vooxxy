@@ -13,6 +13,10 @@ import org.lwjgl.system.MemoryUtil;
 public interface IModelStore {
     int MODEL_SIZE = 64;
 
+    default void exportModel(int id, MemoryBuffer data, net.minecraft.world.level.block.state.BlockState state) {}
+    default void exportColours(int first, MemoryBuffer data) {}
+    default void exportColourIndex(int model, int index) {}
+
     IDeviceBuffer modelBufferHandle();
 
     IDeviceBuffer colourBufferHandle();

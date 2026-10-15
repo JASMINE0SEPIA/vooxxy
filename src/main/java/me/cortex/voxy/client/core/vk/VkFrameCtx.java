@@ -167,6 +167,22 @@ public final class VkFrameCtx {
         this.throwDeferredFailure();
     }
 
+    /** Retires staging used by a provider update without requiring a raster frame. */
+    public void finishExternalUploads() {
+        RenderSystem.assertOnRenderThread();
+        if (this.frameCmd != null) throw new IllegalStateException("External uploads inside a raster frame");
+        if (!this.synchronousHostWork) return;
+        final long frameIdx = this.frameCounter++;
+        this.pendingFrameCallbacks++;
+        try {
+            this.ctx.deferUntilSubmissionComplete(() -> this.onHostFrameCompleted(frameIdx));
+        } catch (RuntimeException | Error failure) {
+            this.pendingFrameCallbacks--;
+            throw failure;
+        }
+        this.flushImmediate();
+    }
+
     /** Host callbacks execute during Minecraft submit; polling is now only an error checkpoint. */
     public void pollRetired() {
         RenderSystem.assertOnRenderThread();
@@ -184,7 +200,10 @@ public final class VkFrameCtx {
             throw new IllegalStateException("Cannot wait/retire while Minecraft frame is still being recorded");
         }
         this.flushImmediate();
-        int idle = vkDeviceWaitIdle(this.ctx.device);
+        int idle;
+        synchronized (me.cortex.voxy.api.VoxyLodApi.deviceHostLock()) {
+            idle = vkDeviceWaitIdle(this.ctx.device);
+        }
         if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) {
             check(idle, "vkDeviceWaitIdle");
         }

@@ -5,13 +5,13 @@ import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
 import me.cortex.voxy.client.core.vk.MinecraftVkHost;
 import me.cortex.voxy.client.core.vk.MinecraftVkHostAdapter;
 import me.cortex.voxy.common.Logger;
-import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
+import me.cortex.voxy.client.core.rendering.RenderMatrices;
 
 import java.lang.ref.WeakReference;
 
 /** Render-thread handoff from Sodium's draw to the enclosing pass boundary. */
 public final class VkFrameBridge {
-    private static ChunkRenderMatrices matrices;
+    private static RenderMatrices matrices;
     private static double x, y, z;
     private static WeakReference<VkRenderCore> failedCore = new WeakReference<>(null);
 
@@ -21,7 +21,7 @@ public final class VkFrameBridge {
 
     public static boolean hasFailed() { return failedCore.get() != null; }
 
-    public static void capture(ChunkRenderMatrices frameMatrices, double camX, double camY, double camZ) {
+    public static void capture(RenderMatrices frameMatrices, double camX, double camY, double camZ) {
         matrices = frameMatrices;
         x = camX;
         y = camY;
