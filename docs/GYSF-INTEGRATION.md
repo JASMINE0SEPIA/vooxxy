@@ -40,6 +40,11 @@ specular maps, distant light sampling and full transition acceptance remain
 separate work. The selection cap defaults to 1024 blocks and can be selected
 with `voxy.external.maxDistanceBlocks`.
 
+With an external renderer active, leaf models retain the cutout layer rather
+than standalone Voxy's opaque foliage override. This keeps mip-filtered alpha
+coverage available to both radiance and shadow rays; standalone foliage policy
+is unchanged.
+
 The paired project is [gysf](https://github.com/JASMINE0SEPIA/gysf), locally the sibling `../gysf`. Its joint smoke run uses an isolated
 world, no Sodium and the most recently built vooxxy JAR. No PCL installation
 or player save is part of the development build.
