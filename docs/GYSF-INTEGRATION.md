@@ -188,3 +188,11 @@ reload, dimension return and save/shutdown; all GPU wrappers are released.
 These geometry probes use frozen synthetic fluid states. Their suspended
 fixture geometry changes illumination and reflections, so those screenshots
 are not clean-pool dark-band or universal water-image acceptance.
+
+gysf 0.6.0 fixes its near-fluid per-triangle normal records and retains the rest
+plane's slope in animated water. The consumer's height search also follows the
+height multiplier and plane-relative ray rate. This needs no provider/ABI
+change; Vulkan 8 remains the pinned `0e4365e1` JAR. Consumer validation includes
+164 Java tests, 6338 production Slang surface cases, 2080 origin cases, 134 real
+in-game triangle-normal comparisons and a 6197-frame maximum-height lifecycle/
+motion/pressure run. See the paired validation record for scope and limits.
