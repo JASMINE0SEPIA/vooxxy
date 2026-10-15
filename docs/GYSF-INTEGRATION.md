@@ -40,6 +40,15 @@ specular maps, distant light sampling and full transition acceptance remain
 separate work. The selection cap defaults to 1024 blocks and can be selected
 with `voxy.external.maxDistanceBlocks`.
 
+gysf 0.2.1 stages overlapping 3D source branches until all replacement BLAS
+batches are ready, then publishes each branch atomically. This covers both
+refinement and coarsening, as well as same-key geometry revisions. Consumers
+must retain selected empty leaves as completion markers: dropping a zero-quad
+mesh loses the information needed to remove previously rendered terrain.
+The consumer can validate published partitions with
+`gysf.voxy.validateCoverage=true`. This uses the existing API 5 contract and
+requires no provider ABI change.
+
 With an external renderer active, leaf models retain the cutout layer rather
 than standalone Voxy's opaque foliage override. This keeps mip-filtered alpha
 coverage available to both radiance and shadow rays; standalone foliage policy
