@@ -1,6 +1,7 @@
 package me.cortex.voxy.client.core.rendering.building;
 
 import me.cortex.voxy.client.core.model.IdNotYetComputedException;
+import me.cortex.voxy.api.LodFluidHeight;
 import me.cortex.voxy.client.core.model.ModelFactory;
 import me.cortex.voxy.client.core.model.ModelQueries;
 import me.cortex.voxy.client.core.util.ScanMesher2D;
@@ -52,6 +53,8 @@ public class RenderDataFactory {
     private WorldSection fluidSourceSection;
     private final WorldSection[] fluidNeighborSections = new WorldSection[27];
     private final int[] fluidCornerHeightCache = new int[WorldSection.SECTION_VOLUME];
+    private final long[] preciseFluidCache;
+    private final FluidHeightSidecar preciseFluidHeights;
 
 
     //TODO: emit directly to memory buffer instead of long arrays
@@ -160,6 +163,7 @@ public class RenderDataFactory {
             int face = (axis<<1)|axisSide;
 
             int encodedPosition = face;
+            long preciseHeight = 0;
             if (fluidQuad) {
                 int cellX;
                 int cellY;
@@ -179,6 +183,8 @@ public class RenderDataFactory {
                 }
 
                 int cornerHeights = RenderDataFactory.this.packFluidCornerHeights(cellX, cellY, cellZ);
+                if (preciseFluidCache != null)
+                    preciseHeight = preciseFluidCache[WorldSection.getIndex(cellX, cellY, cellZ)];
                 encodedPosition |= (cornerHeights&0xFF)<<3;
                 data = (data&~(0xFL<<42)) | (Integer.toUnsignedLong((cornerHeights>>>8)&0xF)<<42);
             } else {
@@ -194,7 +200,9 @@ public class RenderDataFactory {
 
 
             int bufferIdx = type+(type==2?face:0);//Translucent, double side, directional
-            long bufferOffset = (RenderDataFactory.this.quadCounters[bufferIdx]++)*8L + bufferIdx*8L*(1<<16);
+            int bufferIndex = RenderDataFactory.this.quadCounters[bufferIdx]++;
+            long bufferOffset = bufferIndex*8L + bufferIdx*8L*(1<<16);
+            if (preciseFluidHeights != null) preciseFluidHeights.put(bufferIdx, bufferIndex, preciseHeight);
             MemoryUtil.memPutLong(RenderDataFactory.this.quadBufferPtr + bufferOffset, quad);
 
 
@@ -237,8 +245,13 @@ public class RenderDataFactory {
         this(world, modelManager, emitMeshlets, false);
     }
     public RenderDataFactory(WorldEngine world, ModelFactory modelManager, boolean emitMeshlets, boolean generateOccupancy) {
+        this(world, modelManager, emitMeshlets, generateOccupancy, false);
+    }
+    public RenderDataFactory(WorldEngine world, ModelFactory modelManager, boolean emitMeshlets, boolean generateOccupancy, boolean preciseFluids) {
         this.world = world;
         this.modelMan = modelManager;
+        this.preciseFluidCache = preciseFluids ? new long[WorldSection.SECTION_VOLUME] : null;
+        this.preciseFluidHeights = preciseFluids ? new FluidHeightSidecar() : null;
         if (generateOccupancy && BUILD_OCCUPANCY_SET) {
             this.occupancy = new OccupancySet();
         } else {
@@ -259,13 +272,17 @@ public class RenderDataFactory {
             //This can only happen if a contained-fluid model and the raw section
             //state disagree. A full cell is the safest crack-free fallback.
             this.fluidCornerHeightCache[cacheIndex] = 0xFFF;
+            if (this.preciseFluidCache != null) this.preciseFluidCache[cacheIndex] = -1L;
             return 0xFFF;
         }
 
         int packed = 0;
+        long precise = 0;
         for (int cornerX = 0; cornerX < 2; cornerX++) {
             for (int cornerZ = 0; cornerZ < 2; cornerZ++) {
                 float height = this.fluidCornerHeight(fluid, cellX, cellY, cellZ, cornerX, cornerZ);
+                if (this.preciseFluidCache != null)
+                    precise |= ((long)LodFluidHeight.encode(height)) << (16*((cornerX<<1)|cornerZ));
                 //A corner belonging to a fluid cell is never zero, so the
                 //three-bit code can represent 1/8..1 instead of wasting a code.
                 int quantized = Math.max(0, Math.min(7, Math.round(height*8.0f)-1));
@@ -273,6 +290,7 @@ public class RenderDataFactory {
             }
         }
         this.fluidCornerHeightCache[cacheIndex] = packed;
+        if (this.preciseFluidCache != null) this.preciseFluidCache[cacheIndex] = precise;
         return packed;
     }
 
@@ -1915,6 +1933,7 @@ public class RenderDataFactory {
         this.maxZ = Integer.MIN_VALUE;
 
         Arrays.fill(this.quadCounters,0);
+        if (this.preciseFluidHeights != null) this.preciseFluidHeights.reset();
         Arrays.fill(this.opaqueMasks, 0);
         Arrays.fill(this.nonOpaqueMasks, 0);
         Arrays.fill(this.fluidMasks, 0);
@@ -1964,6 +1983,7 @@ public class RenderDataFactory {
         }
 
         int[] offsets = new int[8];
+        long[] preciseHeights = this.preciseFluidHeights != null ? this.preciseFluidHeights.copy(this.quadCounters) : new long[0];
         var buff = new MemoryBuffer(this.quadCount * 8L);
         long ptr = buff.address;
         int coff = 0;
@@ -1995,7 +2015,7 @@ public class RenderDataFactory {
             this.occupancy.write(occupancy.address, false);
         }
 
-        return new BuiltSection(section.key, section.getNonEmptyChildren(), aabb, buff, offsets, occupancy);
+        return new BuiltSection(section.key, section.getNonEmptyChildren(), aabb, buff, offsets, occupancy, preciseHeights);
     }
 
     public void free() {

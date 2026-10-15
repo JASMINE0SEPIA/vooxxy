@@ -56,7 +56,7 @@ public final class LodSession implements AutoCloseable {
 
     public LodSession(WorldEngine world, ModelBakerySubsystem bakery, ServiceManager services, VkModelStore models) {
         this.models = models;
-        generator = new RenderGenerationService(world, bakery, services, false);
+        generator = new RenderGenerationService(world, bakery, services, false, true);
         generator.setResultConsumer(section -> {
             if (closed) section.free();
             else completed.add(section);
@@ -130,10 +130,10 @@ public final class LodSession implements AutoCloseable {
                 if (quads.length > 0) MemoryUtil.memLongBuffer(built.geometryBuffer.address, quads.length).get(quads);
                 LodMesh mesh = new LodMesh(key, ++meshRevision, WorldEngine.getLevel(key), WorldEngine.getX(key),
                         WorldEngine.getY(key), WorldEngine.getZ(key), built.aabb, built.childExistence & 255,
-                        quads, built.offsets == null ? new int[8] : built.offsets);
+                        quads, built.offsets == null ? new int[8] : built.offsets, built.fluidHeights);
                 LodMesh old = cache.put(key, mesh);
                 retainedMeshes.remember(mesh);
-                cacheBytes += quads.length * 8L - (old == null ? 0 : old.quadCount() * 8L);
+                cacheBytes += mesh.retainedBytes() - (old == null ? 0 : old.retainedBytes());
             } finally { built.free(); }
         }
         List<LodMesh> selected = new ArrayList<>();
@@ -155,7 +155,7 @@ public final class LodSession implements AutoCloseable {
         while (iterator.hasNext() && (cacheBytes > CACHE_BYTES || cache.size() > 32768)) {
             var entry = iterator.next();
             if (!retained.contains(entry.getLongKey())) {
-                cacheBytes -= entry.getValue().quadCount() * 8L;
+                cacheBytes -= entry.getValue().retainedBytes();
                 iterator.remove();
             }
         }
@@ -199,7 +199,7 @@ public final class LodSession implements AutoCloseable {
         LodMesh mesh = cache.getAndMoveToLast(key);
         if (mesh == null && !dirty.contains(key)) {
             mesh = retainedMeshes.get(key);
-            if (mesh != null) { cache.putAndMoveToLast(key, mesh); cacheBytes += mesh.quadCount() * 8L; }
+            if (mesh != null) { cache.putAndMoveToLast(key, mesh); cacheBytes += mesh.retainedBytes(); }
         }
         if ((mesh == null || dirty.contains(key)) && !pending.contains(key) && requests < REQUESTS_PER_FRAME && pending.size() < MAX_PENDING) {
             dirty.remove(key);
@@ -234,7 +234,7 @@ public final class LodSession implements AutoCloseable {
                         if (old.key != mesh.key) visited.put(old.key, old);
                         if (!cache.containsKey(old.key)) {
                             cache.putAndMoveToLast(old.key, old);
-                            cacheBytes += old.quadCount() * 8L;
+                            cacheBytes += old.retainedBytes();
                         }
                     }
                     out.addAll(retained);

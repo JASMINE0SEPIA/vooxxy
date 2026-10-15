@@ -40,6 +40,31 @@ specular maps, distant light sampling and full transition acceptance remain
 separate work. The selection cap defaults to 1024 blocks and can be selected
 with `voxy.external.maxDistanceBlocks`.
 
+API 6 adds `LodMesh.fluidHeights()`, a read-only `LongBuffer` that is empty when
+no precise fluid data exists, or follows the complete packed-quad order. A zero
+element means no fluid sidecar for that quad; other elements have four UNORM16
+lanes ordered `(cornerX << 1) | cornerZ`, low lane first. Each lane decodes as
+`unsigned16 / 65535.0`. This is not an IEEE half-float representation. The old
+quad layout and its three-bit fluid heights remain unchanged, and the original
+`LodMesh` constructor remains available.
+
+Only the external provider's generation service captures this sidecar. Its
+worker reuses lazily allocated height buckets and clears reused non-fluid slots
+before the same eight-bucket compaction as geometry. Standalone raster meshing
+does not allocate those buckets. Immutable exported meshes and consumer copies
+own their arrays. The provider LRU counts quad and sidecar payload bytes; its
+192 MiB target can still be exceeded by required active coverage and does not
+measure all Java object/palette overhead. UNORM16 height error is bounded by
+approximately `0.5 / 65535` of the source voxel before FP32 vertex rounding;
+coarse voxel aggregation remains a separate geometry limitation.
+
+gysf 0.5.0 discovers this method optionally and keeps API 5 fallback support.
+`gysf.voxy.legacyFluidHeights=true` is a startup-only geometry control. Its
+isolated smoke probe checks a known still-water cell through provider export,
+reflection copy and actual RT vertex packing; requesting
+`gysf.smoke.requirePreciseFluids=true` makes missing or inaccurate precise data
+a validation failure.
+
 gysf 0.2.1 stages overlapping 3D source branches until all replacement BLAS
 batches are ready, then publishes each branch atomically. This covers both
 refinement and coarsening, as well as same-key geometry revisions. Consumers

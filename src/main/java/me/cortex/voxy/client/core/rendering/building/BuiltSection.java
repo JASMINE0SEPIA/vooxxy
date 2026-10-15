@@ -14,6 +14,8 @@ public final class BuiltSection {
     public final MemoryBuffer geometryBuffer;
     public final int[] offsets;
     public final MemoryBuffer occupancy;
+    /** Owned heap sidecar in final quad order; external CPU consumers copy it before releasing this section. */
+    public final long[] fluidHeights;
 
     private BuiltSection(long position, byte children) {
         this(position, children, -1, null, null, null);
@@ -27,6 +29,10 @@ public final class BuiltSection {
     }
 
     public BuiltSection(long position, byte childExistence, int aabb, MemoryBuffer geometryBuffer, int[] offsets, MemoryBuffer occupancy) {
+        this(position, childExistence, aabb, geometryBuffer, offsets, occupancy, new long[0]);
+    }
+
+    public BuiltSection(long position, byte childExistence, int aabb, MemoryBuffer geometryBuffer, int[] offsets, MemoryBuffer occupancy, long[] fluidHeights) {
         this.position = position;
         this.childExistence = childExistence;
         this.aabb = aabb;
@@ -41,10 +47,11 @@ public final class BuiltSection {
             }
         }
         this.occupancy = occupancy;
+        this.fluidHeights = fluidHeights;
     }
 
     public BuiltSection clone() {
-        return new BuiltSection(this.position, this.childExistence, this.aabb, this.geometryBuffer!=null?this.geometryBuffer.copy():null, this.offsets!=null?Arrays.copyOf(this.offsets, this.offsets.length):null, this.occupancy!=null?this.occupancy.copy():null);
+        return new BuiltSection(this.position, this.childExistence, this.aabb, this.geometryBuffer!=null?this.geometryBuffer.copy():null, this.offsets!=null?Arrays.copyOf(this.offsets, this.offsets.length):null, this.occupancy!=null?this.occupancy.copy():null, this.fluidHeights.clone());
     }
 
     public void free() {

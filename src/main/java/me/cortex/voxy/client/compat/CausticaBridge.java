@@ -23,7 +23,7 @@ public final class CausticaBridge {
     private static LodScene previous;
     private CausticaBridge() {}
 
-    public static boolean available() { return VoxyLodApi.VERSION == 5; }
+    public static boolean available() { return VoxyLodApi.VERSION >= 5 && VoxyLodApi.VERSION <= 6; }
     public static Object deviceHostLock() { return VoxyLodApi.deviceHostLock(); }
     public static void registerExternalRenderer(BooleanSupplier active) { VoxyLodApi.registerExternalRenderer(active); }
     public static long revision() { return revision; }
@@ -41,7 +41,7 @@ public final class CausticaBridge {
             + me.cortex.voxy.client.core.vk.VkImage2D.getTotalAllocationSize(); }
     public static void reset() { cache.clear(); published=List.of(); previous=null; epoch=Long.MIN_VALUE; revision++; }
 
-    /** Advance uploads before RT frame recording and return the complete API 5 scene. */
+    /** Advance uploads before RT frame recording and return the complete versioned scene. */
     public static LodScene pollScene(double x, double y, double z) {
         var client = Minecraft.getInstance();
         var renderer = IVoxyRenderSystemHolder.getNullable();
