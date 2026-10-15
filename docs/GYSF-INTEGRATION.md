@@ -165,3 +165,11 @@ export and production RT corner conversion. Before this change the expanded
 the ordinary topology mode fails on any mismatch above 0.00002 blocks or on
 any missing level-zero fixture section. Broader resource-pack and coarse-shape
 acceptance remains separate from that controlled geometry check.
+
+Fluid dependencies also include diagonal sections and their ceilings. The
+external session now queues changed source keys once, coalesces them on its
+selection worker, and invalidates the full 3x3x3 dependency neighborhood at the
+same LOD level. Previously a ceiling edit at (63,128,63) left stale top vertices
+at (64,127,63), (63,127,64) and (64,127,64), up to 0.6111069 blocks from the near
+flow fixture. Two added Java tests cover this three-axis dependency and signed
+coordinates at every supported LOD level; all 38 provider tests pass.

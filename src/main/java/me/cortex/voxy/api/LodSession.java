@@ -28,6 +28,7 @@ public final class LodSession implements AutoCloseable {
     private final LongOpenHashSet pending = new LongOpenHashSet();
     private final LongOpenHashSet dirty = new LongOpenHashSet();
     private final ConcurrentLinkedQueue<Long> invalidations = new ConcurrentLinkedQueue<>();
+    private final LongOpenHashSet invalidatedSources = new LongOpenHashSet();
     private final ConcurrentLinkedQueue<BuiltSection> completed = new ConcurrentLinkedQueue<>();
     private long revision, meshRevision, cacheBytes;
     private int requests;
@@ -69,14 +70,9 @@ public final class LodSession implements AutoCloseable {
     public void invalidate(long key) {
         if (closed) return;
         invalidations.add(key);
-        int level = WorldEngine.getLevel(key), x = WorldEngine.getX(key), y = WorldEngine.getY(key), z = WorldEngine.getZ(key);
-        invalidations.add(WorldEngine.getWorldSectionId(level, x - 1, y, z));
-        invalidations.add(WorldEngine.getWorldSectionId(level, x + 1, y, z));
-        invalidations.add(WorldEngine.getWorldSectionId(level, x, y - 1, z));
-        invalidations.add(WorldEngine.getWorldSectionId(level, x, y + 1, z));
-        invalidations.add(WorldEngine.getWorldSectionId(level, x, y, z - 1));
-        invalidations.add(WorldEngine.getWorldSectionId(level, x, y, z + 1));
     }
+
+    private void invalidateMesh(long key) { retainedMeshes.invalidate(key); dirty.add(key); }
 
     public LodScene tick(double cameraX, double cameraY, double cameraZ, int minY, int maxY, double radius, LodView view) {
         if (closed) throw new IllegalStateException("LOD session is closed");
@@ -108,10 +104,10 @@ public final class LodSession implements AutoCloseable {
         workingPalette = snapshot;
         Long invalidated;
         retainedMeshes.clean();
-        while ((invalidated = invalidations.poll()) != null) {
-            retainedMeshes.invalidate(invalidated.longValue());
-            dirty.add(invalidated.longValue());
-        }
+        // Coalesce changed sources before expanding their full fluid/shape dependency neighborhood.
+        invalidatedSources.clear();
+        while ((invalidated = invalidations.poll()) != null) invalidatedSources.add(invalidated.longValue());
+        for(long key:invalidatedSources) LodFluidDependencies.forEach(key,this::invalidateMesh);
         // Coalesce camera motion and completed meshes into one consumer-visible selection per interval.
         if (previous != null && paletteRevision == snapshot.revision() && previousMinY == minY
                 && previousMaxY == maxY && previousRadius == radius && start < nextSelectionTime) return previous;
