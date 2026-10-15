@@ -132,4 +132,8 @@ that fixture. The legacy-height control measures Y=111.875, an error of
 0.013885498 blocks. This demonstrates removal of one quantization discontinuity,
 not universal near/far geometry equivalence. Full run details and limitations
 are recorded in the paired project's validation document. No player instance
-is part of these checks.
+is part of these checks. The pinned pair's full motion/reload/dimension run
+completes 5469 RT frames with clean validation and zero native LOD bytes at exit.
+Deliberate allocation pressure retains fallback for 199 client ticks and fully
+recovers its temporary provider distance before reload. A separate real API 5
+provider run confirms that gysf still supports the missing-sidecar case.
