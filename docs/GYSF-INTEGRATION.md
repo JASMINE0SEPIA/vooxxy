@@ -196,3 +196,13 @@ change; Vulkan 8 remains the pinned `0e4365e1` JAR. Consumer validation includes
 164 Java tests, 6338 production Slang surface cases, 2080 origin cases, 134 real
 in-game triangle-normal comparisons and a 6197-frame maximum-height lifecycle/
 motion/pressure run. See the paired validation record for scope and limits.
+
+gysf 0.6.1 replaces first-order previous-wave extrapolation with the actual
+previous field for reflection/motion guides, without changing provider API 6
+or the pinned Vulkan 8 artifact. All 12960 production-Slang temporal cases pass;
+the old implementation fails 2514, with height-guide error up to 2.59633 blocks
+over the tested slider/frame-interval grid. The paired maximum-height/speed-4
+run completes 5223 RT frames, reload/dimensions/motion/pressure recovery and
+zero native LOD bytes at exit with clean Vulkan validation. This is mathematical
+and lifecycle evidence; shoreline clipping and continuous-frame image fidelity
+remain separate acceptance work.
