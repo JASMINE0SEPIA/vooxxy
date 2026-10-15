@@ -67,13 +67,16 @@ public class RenderGenerationService {
     }
 
     public RenderGenerationService(WorldEngine world, ModelBakerySubsystem modelBakery, ServiceManager sm, boolean emitMeshlets, boolean preciseFluids) {
+        this(world,modelBakery,sm,emitMeshlets,preciseFluids,-4096,8192);
+    }
+    public RenderGenerationService(WorldEngine world, ModelBakerySubsystem modelBakery, ServiceManager sm, boolean emitMeshlets, boolean preciseFluids, int minY, int height) {
         this.emitMeshlets = emitMeshlets;
         this.world = world;
         this.modelBakery = modelBakery;
 
         this.service = sm.createService(()->{
             //Thread local instance of the factory
-            var factory = new RenderDataFactory(this.world, this.modelBakery.factory, this.emitMeshlets, false, preciseFluids);
+            var factory = new RenderDataFactory(this.world, this.modelBakery.factory, this.emitMeshlets, false, preciseFluids,minY,height);
             IntOpenHashSet seenMissed = new IntOpenHashSet(128);
             return new Pair<>(() -> {
                 this.processJob(factory, seenMissed);

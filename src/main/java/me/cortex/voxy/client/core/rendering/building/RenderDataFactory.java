@@ -55,6 +55,9 @@ public class RenderDataFactory {
     private final int[] fluidCornerHeightCache = new int[WorldSection.SECTION_VOLUME];
     private final long[] preciseFluidCache;
     private final FluidHeightSidecar preciseFluidHeights;
+    private final ExternalFluidSurface externalFluidSurface;
+    private final byte[] fluidVisibility;
+    private final float[] fluidCornerScratch=new float[4];
 
 
     //TODO: emit directly to memory buffer instead of long arrays
@@ -120,8 +123,6 @@ public class RenderDataFactory {
                 return;
             }
 
-            RenderDataFactory.this.quadCount++;
-
             x -= length-1;
             z -= width-1;
 
@@ -183,6 +184,8 @@ public class RenderDataFactory {
                 }
 
                 int cornerHeights = RenderDataFactory.this.packFluidCornerHeights(cellX, cellY, cellZ);
+                if (fluidVisibility != null && (fluidVisibility[WorldSection.getIndex(cellX,cellY,cellZ)]&(1<<face))==0)
+                    return;
                 if (preciseFluidCache != null)
                     preciseHeight = preciseFluidCache[WorldSection.getIndex(cellX, cellY, cellZ)];
                 encodedPosition |= (cornerHeights&0xFF)<<3;
@@ -200,6 +203,7 @@ public class RenderDataFactory {
 
 
             int bufferIdx = type+(type==2?face:0);//Translucent, double side, directional
+            RenderDataFactory.this.quadCount++;
             int bufferIndex = RenderDataFactory.this.quadCounters[bufferIdx]++;
             long bufferOffset = bufferIndex*8L + bufferIdx*8L*(1<<16);
             if (preciseFluidHeights != null) preciseFluidHeights.put(bufferIdx, bufferIndex, preciseHeight);
@@ -248,10 +252,15 @@ public class RenderDataFactory {
         this(world, modelManager, emitMeshlets, generateOccupancy, false);
     }
     public RenderDataFactory(WorldEngine world, ModelFactory modelManager, boolean emitMeshlets, boolean generateOccupancy, boolean preciseFluids) {
+        this(world,modelManager,emitMeshlets,generateOccupancy,preciseFluids,-4096,8192);
+    }
+    public RenderDataFactory(WorldEngine world, ModelFactory modelManager, boolean emitMeshlets, boolean generateOccupancy, boolean preciseFluids, int minY, int height) {
         this.world = world;
         this.modelMan = modelManager;
         this.preciseFluidCache = preciseFluids ? new long[WorldSection.SECTION_VOLUME] : null;
         this.preciseFluidHeights = preciseFluids ? new FluidHeightSidecar() : null;
+        this.externalFluidSurface = preciseFluids ? new ExternalFluidSurface(this::getFluidBlockState,minY,height) : null;
+        this.fluidVisibility = preciseFluids ? new byte[WorldSection.SECTION_VOLUME] : null;
         if (generateOccupancy && BUILD_OCCUPANCY_SET) {
             this.occupancy = new OccupancySet();
         } else {
@@ -273,6 +282,7 @@ public class RenderDataFactory {
             //state disagree. A full cell is the safest crack-free fallback.
             this.fluidCornerHeightCache[cacheIndex] = 0xFFF;
             if (this.preciseFluidCache != null) this.preciseFluidCache[cacheIndex] = -1L;
+            if (this.fluidVisibility != null) this.fluidVisibility[cacheIndex] = 63;
             return 0xFFF;
         }
 
@@ -281,6 +291,7 @@ public class RenderDataFactory {
         for (int cornerX = 0; cornerX < 2; cornerX++) {
             for (int cornerZ = 0; cornerZ < 2; cornerZ++) {
                 float height = this.fluidCornerHeight(fluid, cellX, cellY, cellZ, cornerX, cornerZ);
+                this.fluidCornerScratch[(cornerX<<1)|cornerZ]=height;
                 if (this.preciseFluidCache != null)
                     precise |= ((long)LodFluidHeight.encode(height)) << (16*((cornerX<<1)|cornerZ));
                 //A corner belonging to a fluid cell is never zero, so the
@@ -291,6 +302,8 @@ public class RenderDataFactory {
         }
         this.fluidCornerHeightCache[cacheIndex] = packed;
         if (this.preciseFluidCache != null) this.preciseFluidCache[cacheIndex] = precise;
+        if (this.externalFluidSurface != null)
+            this.fluidVisibility[cacheIndex]=(byte)this.externalFluidSurface.visibleFaces(state,fluid,cellX,cellY,cellZ,this.fluidCornerScratch);
         return packed;
     }
 
@@ -346,7 +359,9 @@ public class RenderDataFactory {
         FluidState sample = state.getFluidState();
         if (expectedFluid.getType().isSame(sample.getType())) {
             FluidState above = this.getFluidBlockState(cellX, cellY+1, cellZ).getFluidState();
-            return expectedFluid.getType().isSame(above.getType()) ? 1.0f : sample.getOwnHeight();
+            if (expectedFluid.getType().isSame(above.getType())) return 1.0f;
+            if (this.externalFluidSurface != null && this.externalFluidSurface.ceilingOccludes(cellX,cellY,cellZ)) return 1.0f;
+            return sample.getOwnHeight();
         }
         return state.isSolid() ? -1.0f : 0.0f;
     }
@@ -1951,6 +1966,7 @@ public class RenderDataFactory {
         }
 
         this.fluidSourceSection = section;
+        if (this.externalFluidSurface != null) this.externalFluidSurface.section(section);
         try {
             this.generateYZFaces();
             this.generateXFaces();

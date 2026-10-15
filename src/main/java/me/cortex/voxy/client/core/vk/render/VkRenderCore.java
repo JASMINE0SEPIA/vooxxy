@@ -325,7 +325,10 @@ public class VkRenderCore {
     /** Advances the provider on the render thread; exported meshes are immutable. */
     public me.cortex.voxy.api.LodScene externalScene(double x, double y, double z, org.joml.Matrix4fc projectionView, int width, int height) {
         if (shutDown || Minecraft.getInstance().level == null) return null;
-        if (externalSession == null) externalSession = new me.cortex.voxy.api.LodSession(worldIn, modelService, services, modelStore);
+        if (externalSession == null) {
+            var level = Minecraft.getInstance().level;
+            externalSession = new me.cortex.voxy.api.LodSession(worldIn, modelService, services, modelStore,level.getMinY(),level.getHeight());
+        }
         this.frameCtx.flushImmediate();
         this.modelService.tick(900_000);
         this.uploadStream.tick();

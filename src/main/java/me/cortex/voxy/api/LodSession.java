@@ -55,8 +55,11 @@ public final class LodSession implements AutoCloseable {
     private int[] colours = new int[65536];
 
     public LodSession(WorldEngine world, ModelBakerySubsystem bakery, ServiceManager services, VkModelStore models) {
+        this(world,bakery,services,models,-4096,8192);
+    }
+    public LodSession(WorldEngine world, ModelBakerySubsystem bakery, ServiceManager services, VkModelStore models, int minY, int height) {
         this.models = models;
-        generator = new RenderGenerationService(world, bakery, services, false, true);
+        generator = new RenderGenerationService(world, bakery, services, false, true,minY,height);
         generator.setResultConsumer(section -> {
             if (closed) section.free();
             else completed.add(section);

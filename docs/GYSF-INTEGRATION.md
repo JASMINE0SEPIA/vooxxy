@@ -137,3 +137,31 @@ completes 5469 RT frames with clean validation and zero native LOD bytes at exit
 Deliberate allocation pressure retains fallback for 199 client ticks and fully
 recovers its temporary provider distance before reload. A separate real API 5
 provider run confirms that gysf still supports the missing-sidecar case.
+
+## External fluid topology: Vulkan 8
+
+External generation also applies RT fluid-interface rules. A real-shape ceiling
+covering a fluid cell makes its height one, so adjacent corner averaging agrees
+with the near RT mesher. Real neighbor shapes, including glass, then suppress
+covered interfaces; side tests use the two upper corner heights and top tests
+use their minimum. Waterlogged cells retain the near path's self-face policy.
+These changes are selected by the existing external/precise-fluid generation
+mode; standalone raster generation keeps its original heights and culling.
+
+The shape getter reads the worker's retained Voxy section neighborhood, never a
+live client world. At level zero its positions are world block positions; coarse
+levels use the corresponding voxel grid. The external session captures the
+dimension's height bounds on its render thread and supplies them to workers.
+The old constructors retain the representable storage-grid bounds as fallback.
+A worker adds one 32 KiB visibility cache and reuses its corner scratch array.
+The public API and packed quad format remain version 6.
+
+The gysf smoke flag `gysf.smoke.fluidTopology=true` freezes only its isolated
+server while placing known flow, shoreline, waterlogged, glass and slab/solid
+ceiling states. It compares actual near-fluid tessellation against provider
+export and production RT corner conversion. Before this change the expanded
+18-sample fixture finds six extra faces and four top-vertex mismatches up to
+0.1111145 blocks. `gysf.smoke.topologyAllowMismatch=true` is diagnostic only;
+the ordinary topology mode fails on any mismatch above 0.00002 blocks or on
+any missing level-zero fixture section. Broader resource-pack and coarse-shape
+acceptance remains separate from that controlled geometry check.
