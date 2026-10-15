@@ -282,7 +282,9 @@ public class ModelFactory {
             layer = ChunkSectionLayer.CUTOUT;
         }
         if (bake.state.is(BlockTags.LEAVES)) {
-            layer = ChunkSectionLayer.SOLID;
+            // External ray traversal needs alpha coverage for foliage hits and shadows.
+            layer = me.cortex.voxy.api.VoxyLodApi.externalRendererActive()
+                    ? ChunkSectionLayer.CUTOUT : ChunkSectionLayer.SOLID;
         }
         if (layer == null) {
             layer = ChunkSectionLayer.SOLID;
