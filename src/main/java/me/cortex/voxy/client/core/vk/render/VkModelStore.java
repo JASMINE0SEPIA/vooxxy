@@ -226,7 +226,7 @@ public class VkModelStore implements IModelStore {
     @Override
     public void beginTextureUploads() {
         this.atlas.transition(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                this.atlasReadStages(), VK_ACCESS_SHADER_READ_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         this.inUploadBatch = true;
     }
@@ -282,8 +282,16 @@ public class VkModelStore implements IModelStore {
     public void endTextureUploads() {
         this.atlas.transition(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                this.atlasReadStages(), VK_ACCESS_SHADER_READ_BIT);
         this.inUploadBatch = false;
+    }
+
+    private int atlasReadStages() {
+        int stages=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+        if(me.cortex.voxy.api.VoxyLodApi.externalRendererActive()
+                && this.ctx.vk().device.getCapabilities().VK_KHR_ray_tracing_pipeline)
+            stages|=org.lwjgl.vulkan.KHRRayTracingPipeline.VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+        return stages;
     }
 
     @Override

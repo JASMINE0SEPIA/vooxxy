@@ -13,7 +13,7 @@ import java.nio.ByteOrder;
 import java.util.*;
 import java.util.function.BooleanSupplier;
 
-/** Adapts immutable Voxy geometry to gysf's colour-proxy terrain input. Render thread only. */
+/** Render-thread access to immutable LOD scenes and the optional colour-proxy adapter. */
 public final class CausticaBridge {
     private record CachedMesh(long sourceRevision, Mesh mesh) {}
     private static final Map<Long, CachedMesh> cache = new HashMap<>();
@@ -36,14 +36,21 @@ public final class CausticaBridge {
     public static int renderDistanceChunks() { return Math.min(configuredRenderDistanceChunks(), Integer.getInteger("voxy.external.maxDistanceBlocks",1024)/16); }
     public static void reset() { cache.clear(); published=List.of(); previous=null; epoch=Long.MIN_VALUE; revision++; }
 
-    public static List<Mesh> poll(double x, double y, double z, int vanillaChunks, int minY, int maxY) {
+    /** Advance uploads before RT frame recording and return the complete API 5 scene. */
+    public static LodScene pollScene(double x, double y, double z) {
         var client = Minecraft.getInstance();
         var renderer = IVoxyRenderSystemHolder.getNullable();
-        if (!configuredEnabled() || client.level == null || renderer == null || renderer.vkCore == null) { reset(); return published; }
+        if (!configuredEnabled() || client.level == null || renderer == null || renderer.vkCore == null) return null;
         var camera = client.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
         var projection = new Matrix4f(camera.projectionMatrix).mul(camera.viewRotationMatrix);
         var window = client.getWindow();
-        LodScene scene = VoxyLodApi.update(x,y,z,projection,window.getWidth(),window.getHeight());
+        return VoxyLodApi.update(x,y,z,projection,window.getWidth(),window.getHeight());
+    }
+
+    public static List<Mesh> poll(double x, double y, double z, int vanillaChunks, int minY, int maxY) {
+        LodScene scene = pollScene(x,y,z);
+        if (scene == null) { reset(); return published; }
+        var renderer = IVoxyRenderSystemHolder.getNullable();
         if (scene == null || scene == previous) return published;
         if (epoch != scene.epoch()) { reset(); epoch=scene.epoch(); }
         // Palette snapshots also change when new biome colours arrive without remeshing geometry.

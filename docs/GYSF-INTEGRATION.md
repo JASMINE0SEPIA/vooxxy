@@ -27,11 +27,18 @@ colours and the provider-owned Vulkan atlas view. The consumer owns its readines
 state. Epoch changes invalidate a prior world session. Provider uploads have a
 submission retirement boundary even when no Voxy raster frame executes.
 
-`CausticaBridge` is the current compatibility adapter to gysf's existing coarse
-RT terrain input. It provides average albedo and whole-block coordinates. It
-does not supply full texture/cutout/PBR or sloped-fluid fidelity. The typed API
-retains the richer data needed for that next consumer. Its selection cap defaults
-to 1024 blocks and can be selected with `voxy.external.maxDistanceBlocks`.
+`CausticaBridge.pollScene` advances the provider at client tick start and exposes
+the complete immutable API 5 scene to gysf. The consumer copies CPU data and
+borrows the atlas image view. Atlas upload barriers include ray-tracing shader
+reads when an external RT renderer is active. The legacy `poll` colour-proxy
+adapter remains available for older consumers and controlled comparisons.
+
+gysf consumes per-face textures, conditional biome tint, cutout alpha and the
+provider's fractional face positions and four-corner fluid heights. Its 3D API
+selection must not be passed through a 2D DH coverage filter. Material normal/
+specular maps, distant light sampling and full transition acceptance remain
+separate work. The selection cap defaults to 1024 blocks and can be selected
+with `voxy.external.maxDistanceBlocks`.
 
 The paired project is [gysf](https://github.com/JASMINE0SEPIA/gysf), locally the sibling `../gysf`. Its joint smoke run uses an isolated
 world, no Sodium and the most recently built vooxxy JAR. No PCL installation
