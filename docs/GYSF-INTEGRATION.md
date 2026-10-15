@@ -173,3 +173,18 @@ same LOD level. Previously a ceiling edit at (63,128,63) left stale top vertices
 at (64,127,63), (63,127,64) and (64,127,64), up to 0.6111069 blocks from the near
 flow fixture. Two added Java tests cover this three-axis dependency and signed
 coordinates at every supported LOD level; all 38 provider tests pass.
+
+The final `0e4365e1` source passes strict static/add/remove geometry comparison
+(18 + 21 + 21 samples, 67 faces, zero mismatches; maximum vertex error
+0.0000076293945 blocks). Its full joint lifecycle/motion/pressure run completes
+7211 RT frames with 886 replacement groups and 171 validated partitions. Native
+LOD allocation peaks at 301126464 bytes and returns to zero; deliberate pressure
+causes five deferrals, two distance reductions and three recoveries, with full
+recovery before reload. Vulkan validation remains clean.
+
+Standalone Sodium 0.9.3-alpha.1 Vulkan lifecycle/synchronization also passes
+38,303 block-state round trips, live edits, renderer control/rebuild, resource
+reload, dimension return and save/shutdown; all GPU wrappers are released.
+These geometry probes use frozen synthetic fluid states. Their suspended
+fixture geometry changes illumination and reflections, so those screenshots
+are not clean-pool dark-band or universal water-image acceptance.
