@@ -11,6 +11,7 @@ import me.cortex.voxy.common.util.UnsafeUtil;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.common.world.WorldSection;
 import me.cortex.voxy.common.world.other.Mapper;
+import me.cortex.voxy.common.world.other.FluidMipData;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
@@ -361,7 +362,9 @@ public class RenderDataFactory {
             FluidState above = this.getFluidBlockState(cellX, cellY+1, cellZ).getFluidState();
             if (expectedFluid.getType().isSame(above.getType())) return 1.0f;
             if (this.externalFluidSurface != null && this.externalFluidSurface.ceilingOccludes(cellX,cellY,cellZ)) return 1.0f;
-            return sample.getOwnHeight();
+            long raw = this.getFluidRawState(cellX, cellY, cellZ);
+            int level = this.fluidSourceSection.lvl;
+            return FluidMipData.hasHeight(raw, level) ? FluidMipData.cellHeight(raw, level) : sample.getOwnHeight();
         }
         return state.isSolid() ? -1.0f : 0.0f;
     }
@@ -377,6 +380,10 @@ public class RenderDataFactory {
     }
 
     private BlockState getFluidBlockState(int cellX, int cellY, int cellZ) {
+        return this.world.getMapper().getBlockStateFromBlockId(Mapper.getBlockId(this.getFluidRawState(cellX, cellY, cellZ)));
+    }
+
+    private long getFluidRawState(int cellX, int cellY, int cellZ) {
         int sectionX = Math.floorDiv(cellX, 32);
         int sectionY = Math.floorDiv(cellY, 32);
         int sectionZ = Math.floorDiv(cellZ, 32);
@@ -400,8 +407,7 @@ public class RenderDataFactory {
         int localX = Math.floorMod(cellX, 32);
         int localY = Math.floorMod(cellY, 32);
         int localZ = Math.floorMod(cellZ, 32);
-        long rawState = section._unsafeGetRawDataArray()[WorldSection.getIndex(localX, localY, localZ)];
-        return this.world.getMapper().getBlockStateFromBlockId(Mapper.getBlockId(rawState));
+        return section._unsafeGetRawDataArray()[WorldSection.getIndex(localX, localY, localZ)];
     }
 
     private void releaseFluidNeighborSections() {

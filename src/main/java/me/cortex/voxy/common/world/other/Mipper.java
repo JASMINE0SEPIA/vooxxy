@@ -8,15 +8,10 @@ public class Mipper {
     // as distant horizons done
 
 
-    //TODO: also pass in the level its mipping from, cause at lower levels you want to preserve block details
-    // but at higher details you want more air
-
-
-
     //TODO: instead of opacity only, add a level to see if the visual bounding box allows for seeing through top down etc
     public static long mip(long I000, long I100, long I001, long I101,
                            long I010, long I110, long I011, long I111,
-                          Mapper mapper) {
+                          Mapper mapper, int level) {
         //TODO: do a stable sort on all the entires, w.r.t the opacity and maybe light as a secondary???
         // then select the highest value
         // UPDATE, dumbass, the highest value _is_ the max/min
@@ -58,7 +53,7 @@ public class Mipper {
         }
 
         if (max != -1) {
-            return switch (max&0b111) {
+            long selected = switch (max&0b111) {
                 case 0 -> I000;
                 case 1 -> I001;
                 case 2 -> I010;
@@ -69,6 +64,8 @@ public class Mipper {
                 case 7 -> I111;
                 default -> throw new IllegalStateException("Unexpected value: " + (max&0b111));
             };
+            return FluidMipData.reduce(selected, mapper, level,
+                    I000, I100, I001, I101, I010, I110, I011, I111);
         } else {
             int blockLight = (Mapper.getLightId(I000) & 0xF0) + (Mapper.getLightId(I001) & 0xF0) + (Mapper.getLightId(I010) & 0xF0) + (Mapper.getLightId(I011) & 0xF0) +
                     (Mapper.getLightId(I100) & 0xF0) + (Mapper.getLightId(I101) & 0xF0) + (Mapper.getLightId(I110) & 0xF0) + (Mapper.getLightId(I111) & 0xF0);

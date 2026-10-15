@@ -80,7 +80,10 @@ public class WorldUpdater {
             } else {
                 //If nothing changed just need to release, dont need to update parent mips
                 worldSection.release();
-                break;
+                shouldCheckEmptiness = false;
+                // Reingesting unchanged source water must also upgrade old parent voxels that
+                // predate source-height metadata. At most 585 extra comparisons per chunk section.
+                if (!section.hasFluidMipData) break;
             }
         }
 

@@ -9,6 +9,8 @@ public class VoxelizedSection {
     public int y;
     public int z;
     public int lvl0NonAirCount;
+    /** Recompare parent mips even when old cached level-zero data is already identical. */
+    public boolean hasFluidMipData;
     public final long[] section;
     public VoxelizedSection(long[] section) {
         this.section = section;
@@ -51,6 +53,7 @@ public class VoxelizedSection {
 
     public VoxelizedSection zero() {
         this.lvl0NonAirCount = 0;
+        this.hasFluidMipData = false;
         Arrays.fill(this.section, 0);
         return this;
     }

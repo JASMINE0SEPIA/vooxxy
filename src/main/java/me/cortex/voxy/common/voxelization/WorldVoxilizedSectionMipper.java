@@ -2,6 +2,7 @@ package me.cortex.voxy.common.voxelization;
 
 import me.cortex.voxy.common.world.other.Mapper;
 import me.cortex.voxy.common.world.other.Mipper;
+import me.cortex.voxy.common.world.other.FluidMipData;
 
 public class WorldVoxilizedSectionMipper {
     private static int G(int x, int y, int z) {
@@ -22,6 +23,7 @@ public class WorldVoxilizedSectionMipper {
 
     public static void mipSection(VoxelizedSection section, Mapper mapper) {
         var data = section.section;
+        section.hasFluidMipData = false;
 
         //Mip L1
         int i = 0;
@@ -32,8 +34,9 @@ public class WorldVoxilizedSectionMipper {
             data[16*16*16 + i++] = Mipper.mip(
                     data[q|G(0,0,0)], data[q|G(1,0,0)], data[q|G(0,0,1)], data[q|G(1,0,1)],
                     data[q|G(0,1,0)], data[q|G(1,1,0)], data[q|G(0,1,1)], data[q|G(1,1,1)],
-                    mapper
+                    mapper, 1
             );
+            section.hasFluidMipData |= FluidMipData.hasHeight(data[16*16*16 + i-1], 1);
             if (q == MSK)
                 break;
             q = (q+iMSK1)&MSK;
@@ -48,7 +51,7 @@ public class WorldVoxilizedSectionMipper {
                             Mipper.mip(
                                     data[H(x, y, z)],       data[H(x+1, y, z)],       data[H(x, y, z+1)],      data[H(x+1, y, z+1)],
                                     data[H(x, y+1, z)],  data[H(x+1, y+1, z)],  data[H(x, y+1, z+1)], data[H(x+1, y+1, z+1)],
-                                    mapper);
+                                    mapper, 2);
                 }
             }
         }
@@ -62,7 +65,7 @@ public class WorldVoxilizedSectionMipper {
                             Mipper.mip(
                                     data[I(x, y, z)],       data[I(x+1, y, z)],       data[I(x, y, z+1)],      data[I(x+1, y, z+1)],
                                     data[I(x, y+1, z)],   data[I(x+1, y+1, z)],  data[I(x, y+1, z+1)], data[I(x+1, y+1, z+1)],
-                                    mapper);
+                                    mapper, 3);
                 }
             }
         }
@@ -72,6 +75,6 @@ public class WorldVoxilizedSectionMipper {
                 Mipper.mip(
                         data[J(0, 0, 0)], data[J(1, 0, 0)], data[J(0, 0, 1)], data[J(1, 0, 1)],
                         data[J(0, 1, 0)], data[J(1, 1, 0)], data[J(0, 1, 1)], data[J(1, 1, 1)],
-                        mapper);
+                        mapper, 4);
     }
 }
