@@ -206,3 +206,14 @@ run completes 5223 RT frames, reload/dimensions/motion/pressure recovery and
 zero native LOD bytes at exit with clean Vulkan validation. This is mathematical
 and lifecycle evidence; shoreline clipping and continuous-frame image fidelity
 remain separate acceptance work.
+
+gysf 0.6.2 replaces modulo-4096 world coordinates and the hourly water clock
+with transported per-wave spatial/long-time phases. Its reflected internal
+world data grows by 224 bytes; provider API 6 and the `0e4365e1` artifact are
+unchanged. All 15552 paired Java-to-Slang field cases pass through world-border
+coordinates, clock/base changes and one-week timestamps; the legacy policy
+fails 3936. All 167 consumer Java tests pass. The final 5200-frame Vulkan run
+observes actual terrain origins -4352..4288, passes reload/dimensions/motion/
+pressure recovery and ends with zero native LOD bytes. Host numerical results
+are separate from GPU readback, clean-pool images and continuous-frame visual
+acceptance. Shoreline clipping remains open.
