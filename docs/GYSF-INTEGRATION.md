@@ -217,3 +217,13 @@ observes actual terrain origins -4352..4288, passes reload/dimensions/motion/
 pressure recovery and ends with zero native LOD bytes. Host numerical results
 are separate from GPU readback, clean-pool images and continuous-frame visual
 acceptance. Shoreline clipping remains open.
+
+Clean gysf 0.6.2 image controls now use a separate pool world without topology
+fixtures. Mixed/full-near static matrices and 226/159 animated PNG samples show
+zero near-black pixels in the original band region under the recorded settings.
+The runs do not share wave phases and are not pixel-identical references. A new
+consumer host diagnostic finds 2104/4096 grazing surface-residual failures in
+the current solver. Its shaderTest-only candidate passes the residual grid and
+32 dense nearest-root references, but GPU cost and finite-water/shore geometry
+still need qualification. This work changes validation tools only; the pinned
+consumer/provider production artifacts remain unchanged.
