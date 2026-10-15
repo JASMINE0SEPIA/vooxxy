@@ -332,7 +332,8 @@ public class VkRenderCore {
         this.frameCtx.finishExternalUploads();
         var level = Minecraft.getInstance().level;
         return externalSession.tick(x,y,z,level.getMinY(),level.getMaxY(),
-                Math.min(VoxyConfig.CONFIG.sectionRenderDistance*512.0, Math.clamp(Integer.getInteger("voxy.external.maxDistanceBlocks",1024),512,10000)),
+                me.cortex.voxy.api.VoxyLodApi.limitExternalDistance(
+                        me.cortex.voxy.client.compat.CausticaBridge.requestedDistanceBlocks()),
                 new me.cortex.voxy.api.LodView(x,y,z,projectionView,width,height,VoxyConfig.CONFIG.subDivisionSize));
     }
 

@@ -33,7 +33,12 @@ public final class CausticaBridge {
     public static void setConfiguredIngestEnabled(boolean value) { VoxyConfig.CONFIG.ingestEnabled = value; VoxyConfig.CONFIG.save(); }
     public static int configuredRenderDistanceChunks() { return Math.round(VoxyConfig.CONFIG.sectionRenderDistance * 32); }
     public static void setConfiguredRenderDistanceChunks(int value) { VoxyConfig.CONFIG.sectionRenderDistance = Math.clamp(value,32,512)/32f; VoxyConfig.CONFIG.save(); }
-    public static int renderDistanceChunks() { return Math.min(configuredRenderDistanceChunks(), Integer.getInteger("voxy.external.maxDistanceBlocks",1024)/16); }
+    public static int requestedDistanceBlocks() { return Math.min(configuredRenderDistanceChunks()*16,
+            Math.clamp(Integer.getInteger("voxy.external.maxDistanceBlocks",1024),512,10000)); }
+    public static int renderDistanceChunks() { return VoxyLodApi.limitExternalDistance(requestedDistanceBlocks())/16; }
+    public static void setExternalDistanceLimit(int blocks) { VoxyLodApi.setExternalDistanceLimit(blocks); }
+    public static long ownedGpuBytes() { return me.cortex.voxy.client.core.vk.VkBuffer.getTotalAllocationSize()
+            + me.cortex.voxy.client.core.vk.VkImage2D.getTotalAllocationSize(); }
     public static void reset() { cache.clear(); published=List.of(); previous=null; epoch=Long.MIN_VALUE; revision++; }
 
     /** Advance uploads before RT frame recording and return the complete API 5 scene. */

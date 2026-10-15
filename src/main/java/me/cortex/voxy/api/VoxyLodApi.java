@@ -9,6 +9,7 @@ public final class VoxyLodApi {
     static { VERSION = 5; }
     private static final Object DEVICE_HOST_LOCK = new Object();
     private static java.util.function.BooleanSupplier externalRenderer = () -> false;
+    private static final LodDistanceLimit DISTANCE_LIMIT = new LodDistanceLimit();
     private VoxyLodApi() {}
 
     /** Shared host synchronization for device-idle and queue submission across renderer-owned queues. */
@@ -20,6 +21,11 @@ public final class VoxyLodApi {
     }
 
     public static boolean externalRendererActive() { return externalRenderer.getAsBoolean(); }
+
+    /** Render-thread consumer pressure control. Zero clears it; saved user configuration is untouched. */
+    public static void setExternalDistanceLimit(int blocks) { DISTANCE_LIMIT.set(blocks); }
+    public static int externalDistanceLimit() { return DISTANCE_LIMIT.get(); }
+    public static int limitExternalDistance(int requestedBlocks) { return DISTANCE_LIMIT.apply(requestedBlocks); }
 
     /** Returns null when the world or Vulkan LOD provider is unavailable. */
     public static LodScene update(double x, double y, double z, org.joml.Matrix4fc projectionView, int width, int height) {

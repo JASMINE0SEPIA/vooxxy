@@ -49,6 +49,16 @@ The consumer can validate published partitions with
 `gysf.voxy.validateCoverage=true`. This uses the existing API 5 contract and
 requires no provider ABI change.
 
+Vulkan 6 adds optional API 5 bridge methods `setExternalDistanceLimit(int)` and
+`ownedGpuBytes()`. The first applies a consumer pressure cap to both the actual
+selection radius and its reported distance. Zero clears it; positive values
+are clamped to 128..10000 blocks and cannot raise the original requested range.
+It never saves the Voxy config. gysf clears this limit during teardown and
+recovers it gradually after memory pressure subsides. The second reports
+Java-owned provider buffer/image allocation bytes; retired native allocations
+remain represented by the driver's process-wide budget estimate. These are
+separate diagnostics and must not be summed into the driver usage again.
+
 With an external renderer active, leaf models retain the cutout layer rather
 than standalone Voxy's opaque foliage override. This keeps mip-filtered alpha
 coverage available to both radiance and shadow rays; standalone foliage policy
