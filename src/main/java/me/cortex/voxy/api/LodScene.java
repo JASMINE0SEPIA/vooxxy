@@ -10,6 +10,9 @@ public record LodScene(long epoch, long revision, long atlasView, int textureSiz
     /** One immutable node index; consumer readiness state remains render-thread owned. */
     public static final class Index {
         private LodHierarchy.Selection value;
+        private final boolean refinementPending;
+        public Index() { this(false); }
+        Index(boolean refinementPending) { this.refinementPending=refinementPending; }
         synchronized LodHierarchy.Selection get(LodScene scene) {
             if (value == null) value = new LodHierarchy.Selection(scene);
             return value;
@@ -31,6 +34,8 @@ public record LodScene(long epoch, long revision, long atlasView, int textureSiz
         this(epoch, revision, atlasView, textureSize, meshes, List.of(), models, colours);
     }
     @Override public int[] colours() { return colours.clone(); }
+    /** A nonempty selected parent is only a temporary fallback for requested, unfinished children. */
+    public boolean refinementPending() { return index.refinementPending; }
     /** Unavailable palette entries use the provider's untinted sentinel. */
     public int colour(int index) { return index >= 0 && index < colours.length ? colours[index] : -1; }
 }

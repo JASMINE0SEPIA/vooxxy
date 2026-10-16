@@ -50,6 +50,7 @@ public final class LodSession implements AutoCloseable {
     private int previousMinY, previousMaxY;
     private double previousRadius;
     private final Long2ObjectLinkedOpenHashMap<LodMesh> visited = new Long2ObjectLinkedOpenHashMap<>();
+    private final LongOpenHashSet refinementFallbacks = new LongOpenHashSet();
     private final LodMeshRetention retainedMeshes = new LodMeshRetention();
     private long paletteRevision = -1;
     private Map<Integer, LodModel> palette = Map.of();
@@ -119,6 +120,7 @@ public final class LodSession implements AutoCloseable {
         requests = 0;
         dirty.removeIf((java.util.function.LongPredicate) key -> !cache.containsKey(key) && !pending.contains(key));
         visited.clear();
+        refinementFallbacks.clear();
         for (int n = 0; n < REQUESTS_PER_FRAME; n++) {
             BuiltSection built = completed.poll();
             if (built == null) break;
@@ -159,6 +161,7 @@ public final class LodSession implements AutoCloseable {
             }
         }
         Set<LodMesh> leaves = new HashSet<>(selected);
+        boolean refinementPending=selected.stream().anyMatch(m -> refinementFallbacks.contains(m.key));
         List<LodMesh> ancestors = visited.values().stream().filter(m -> !leaves.contains(m)).toList();
         debugPending=pending.size(); debugCache=cache.size();
         if (Boolean.getBoolean("caustica.voxy.profile")) {
@@ -169,7 +172,8 @@ public final class LodSession implements AutoCloseable {
                 profileAt = now; profileFrames = profileNs = 0;
             }
         }
-        if (previous != null && previous.meshes().equals(selected) && previous.ancestors().equals(ancestors) && paletteRevision == snapshot.revision())
+        if (previous != null && previous.meshes().equals(selected) && previous.ancestors().equals(ancestors)
+                && previous.refinementPending()==refinementPending && paletteRevision == snapshot.revision())
             return previous;
         if (paletteRevision != snapshot.revision()) {
             Map<Integer, LodModel> updated = new HashMap<>();
@@ -182,7 +186,8 @@ public final class LodSession implements AutoCloseable {
             paletteRevision = snapshot.revision();
         }
         LodScene next = new LodScene(epoch, ++revision,
-                snapshot.atlasView(), ModelFactory.MODEL_TEXTURE_SIZE, selected, ancestors, palette, colours);
+                snapshot.atlasView(), ModelFactory.MODEL_TEXTURE_SIZE, selected, ancestors, palette, colours,
+                new LodScene.Index(refinementPending));
         LodHierarchy.prepare(next);
         previous = next;
         previousCoverage = null;
@@ -240,6 +245,7 @@ public final class LodSession implements AutoCloseable {
                     return true;
                 }
             }
+            if(mesh.quadCount()!=0)refinementFallbacks.add(mesh.key);
         }
         out.add(mesh);
         return true;

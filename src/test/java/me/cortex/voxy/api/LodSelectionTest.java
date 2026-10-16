@@ -135,6 +135,15 @@ class LodSelectionTest {
         assertTrue(view(960, 540, 28, 0, -1400, 70).refine(-32, -32, -1800, 64));
     }
 
+    @Test void pendingRefinementMetadataSurvivesAtlasGrowthWithoutChangingLegacyScenes() {
+        LodMesh root=mesh(4,0,3);
+        LodScene waiting=new LodScene(1,2,3,16,List.of(root),List.of(),Map.of(),new int[0],new LodScene.Index(true));
+        assertTrue(waiting.refinementPending());
+        assertTrue(waiting.withAtlas(7).refinementPending(),"atlas growth must not admit a temporary coarse parent");
+        assertEquals(List.of(root),LodHierarchy.readySelection(waiting,m->true));
+        assertFalse(scene(List.of(root),List.of()).refinementPending(),"older scene constructors remain compatible");
+    }
+
     @Test void projectedAreaMatchesSixFaceCrossProducts() {
         float[][] points = new float[8][2];
         for (int i = 0; i < 8; i++) {
