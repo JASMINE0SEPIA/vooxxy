@@ -122,6 +122,7 @@ public class WorldConversionFactory {
                                            boolean shouldZoom,
                                            long zoomSeed) {
         //Cheat by creating a local pallet then read the data directly
+        section.sourceExact = true;
         var cache = THREAD_LOCAL.get();
         var blockCache = cache.getLocalMapping(stateMapper);
 

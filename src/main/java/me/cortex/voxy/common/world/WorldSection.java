@@ -22,6 +22,7 @@ public final class WorldSection {
     private static final VarHandle NON_EMPTY_BLOCK_HANDLE;
     private static final VarHandle IN_SAVE_QUEUE_HANDLE;
     private static final VarHandle IS_DIRTY_HANDLE;
+    private static final VarHandle SOURCE_COVERAGE_HANDLE;
 
     static {
         try {
@@ -30,6 +31,7 @@ public final class WorldSection {
             NON_EMPTY_BLOCK_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "nonEmptyBlockCount", int.class);
             IN_SAVE_QUEUE_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "inSaveQueue", boolean.class);
             IS_DIRTY_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "isDirty", boolean.class);
+            SOURCE_COVERAGE_HANDLE = MethodHandles.lookup().findVarHandle(WorldSection.class, "sourceCoverage", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new RuntimeException(e);
         }
@@ -55,6 +57,8 @@ public final class WorldSection {
     long[] data = null;
     volatile int nonEmptyBlockCount = 0;//Note: only needed for level 0 sections
     volatile byte nonEmptyChildren;
+    // Known source chunks include air. Non-empty child bits cannot distinguish air from unvisited data.
+    volatile int sourceCoverage;
 
     final ActiveSectionTracker tracker;
     volatile boolean inSaveQueue;
@@ -87,6 +91,25 @@ public final class WorldSection {
 
     public long[] _unsafeGetRawDataArray() {
         return this.data;
+    }
+
+    public int getSourceCoverage() { return sourceCoverage; }
+
+    public boolean isSourceKnown(int localX, int localY, int localZ) {
+        if (lvl != 0) return false;
+        return (sourceCoverage & (1 << getChildIndex(localX >> 4, localY >> 4, localZ >> 4))) != 0;
+    }
+
+    boolean markSourceKnown(int chunkX, int chunkY, int chunkZ) {
+        return setSourceKnown(chunkX,chunkY,chunkZ,true);
+    }
+
+    boolean setSourceKnown(int chunkX, int chunkY, int chunkZ, boolean exact) {
+        if (lvl != 0) throw new IllegalStateException("Source coverage belongs to level zero");
+        int bit = 1 << getChildIndex(chunkX, chunkY, chunkZ);
+        int previous=(int)(exact ? SOURCE_COVERAGE_HANDLE.getAndBitwiseOr(this,bit)
+                : SOURCE_COVERAGE_HANDLE.getAndBitwiseAnd(this,~bit));
+        return ((previous & bit)!=0) != exact;
     }
 
     @Override
@@ -292,8 +315,10 @@ public final class WorldSection {
 
     public void markDirty() {
         IS_DIRTY_HANDLE.getAndSet(this, true);
-        this.renderRevision.incrementAndGet();
+        advanceRenderRevision();
     }
+
+    void advanceRenderRevision() { this.renderRevision.incrementAndGet(); }
 
     /**
      * Monotonic revision used by renderer backends to avoid rebuilding an

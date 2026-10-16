@@ -9,6 +9,7 @@ import org.lwjgl.system.MemoryUtil;
 
 public class SaveLoadSystem3 {
     public static final int STORAGE_VERSION = 0;
+    private static final long SOURCE_COVERAGE_TAG = 0xa5L << 56;
 
     private record SerializationCache(Long2ShortOpenHashMap lutMapCache, MemoryBuffer memoryBuffer) {
         public SerializationCache() {
@@ -69,7 +70,9 @@ public class SaveLoadSystem3 {
         long metadata = 0;
         metadata |= Integer.toUnsignedLong(LUT.size());//Bottom 2 bytes
         metadata |= Byte.toUnsignedLong(section.getNonEmptyChildren())<<16;//Next byte
-        //5 bytes free
+        // Optional source-knowledge extension. Old readers ignore these previously unused bits.
+        if (section.lvl == 0 && section.getSourceCoverage() != 0)
+            metadata |= SOURCE_COVERAGE_TAG | ((long) section.getSourceCoverage() << 24);
 
         MemoryUtil.memPutLong(metadataPtr, metadata);
         //TODO: do hash
@@ -89,6 +92,8 @@ public class SaveLoadSystem3 {
 
         final long metadata = MemoryUtil.memGetLong(ptr); ptr += 8;
         section.nonEmptyChildren = (byte) ((metadata>>>16)&0xFF);
+        section.sourceCoverage = section.lvl == 0 && (metadata & (0xffL << 56)) == SOURCE_COVERAGE_TAG
+                ? (int) ((metadata >>> 24) & 255) : 0;
         final long lutBasePtr = ptr + WorldSection.SECTION_VOLUME * 2;
 
         final var blockData = section.data;

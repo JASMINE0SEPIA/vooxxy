@@ -27,6 +27,8 @@ public final class CausticaBridge {
     public static Object deviceHostLock() { return VoxyLodApi.deviceHostLock(); }
     public static void registerExternalRenderer(BooleanSupplier active) { VoxyLodApi.registerExternalRenderer(active); }
     public static long revision() { return revision; }
+    public static int waterDomainVersion() { return VoxyLodApi.waterDomainVersion(); }
+    public static LodWaterDomain.Snapshot pollWaterDomain(int[] xyz) { return VoxyLodApi.pollWaterDomain(xyz); }
     public static boolean configuredEnabled() { return VoxyConfig.CONFIG.enabled; }
     public static void setConfiguredEnabled(boolean value) { VoxyConfig.CONFIG.enabled = value; VoxyConfig.CONFIG.save(); }
     public static boolean configuredIngestEnabled() { return VoxyConfig.CONFIG.ingestEnabled; }

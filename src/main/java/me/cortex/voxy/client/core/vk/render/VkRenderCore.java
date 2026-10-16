@@ -57,6 +57,7 @@ public class VkRenderCore {
     private long successfulFrames;
     private final ServiceManager services;
     private volatile me.cortex.voxy.api.LodSession externalSession;
+    private me.cortex.voxy.api.LodWaterDomain externalWater;
 
     public VkRenderCore(WorldEngine world, ServiceManager sm) {
         world.acquireRef();
@@ -342,6 +343,14 @@ public class VkRenderCore {
 
     public int externalAverageColour(int model) { return this.modelStore.averageColour(model); }
 
+    /** Optional CPU-only field capability; the base mesh API remains version 6. */
+    public me.cortex.voxy.api.LodWaterDomain.Snapshot externalWaterDomain(int[] xyz) {
+        var level=Minecraft.getInstance().level;
+        if(shutDown || level==null) return null;
+        if(externalWater==null) externalWater=new me.cortex.voxy.api.LodWaterDomain(worldIn,level.getMinY(),level.getHeight());
+        return externalWater.poll(xyz);
+    }
+
     public void setRenderDistance(float renderDistance) {
         if (this.renderDistanceTracker != null) this.renderDistanceTracker.setRenderDistance((int) Math.ceil(renderDistance + 1));
     }
@@ -376,6 +385,10 @@ public class VkRenderCore {
         if (this.shutDown) return;
         this.shutDown = true;
         Logger.info("Shutting down Voxy pure-Vulkan render core");
+
+        var water=this.externalWater;
+        this.externalWater=null;
+        if(water!=null) cleanup("external water domain",water::close);
 
         var external = this.externalSession;
         this.externalSession = null;

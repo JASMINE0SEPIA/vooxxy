@@ -17,6 +17,7 @@ public final class WorldEngine {
     public static final int UPDATE_TYPE_BLOCK_BIT = 1;
     public static final int UPDATE_TYPE_CHILD_EXISTENCE_BIT = 2;
     public static final int UPDATE_TYPE_DONT_SAVE = 4;
+    public static final int UPDATE_TYPE_SOURCE_KNOWLEDGE_BIT = 8;
     public static final int DEFAULT_UPDATE_FLAGS = UPDATE_TYPE_BLOCK_BIT | UPDATE_TYPE_CHILD_EXISTENCE_BIT;
 
     public interface ISectionChangeCallback {void accept(WorldSection section, int updateFlags, int neighborMsk);}
@@ -135,15 +136,16 @@ public final class WorldEngine {
         if (section.tracker != this.sectionTracker) {
             throw new IllegalStateException("Section is not from here");
         }
+        // Publish completed voxel writes before listeners can schedule a snapshot. Publishing after
+        // callbacks lets a fast worker reuse an old-revision snapshot and cache it indefinitely.
+        if ((changeState&UPDATE_TYPE_DONT_SAVE)==0) section.markDirty();
+        else section.advanceRenderRevision();
         ISectionChangeCallback callback = this.dirtyCallback;
-        if (callback != null) {
-            callback.accept(section, changeState, neighborMsk);
+        if (callback != null && (changeState & (UPDATE_TYPE_BLOCK_BIT | UPDATE_TYPE_CHILD_EXISTENCE_BIT)) != 0) {
+            callback.accept(section, changeState & ~UPDATE_TYPE_SOURCE_KNOWLEDGE_BIT, neighborMsk);
         }
         for (ISectionChangeCallback listener : this.changeListeners) {
             listener.accept(section, changeState, neighborMsk);
-        }
-        if ((changeState&UPDATE_TYPE_DONT_SAVE)==0) {
-            section.markDirty();
         }
     }
 

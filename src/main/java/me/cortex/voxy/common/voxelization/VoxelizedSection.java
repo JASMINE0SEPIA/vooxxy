@@ -11,6 +11,8 @@ public class VoxelizedSection {
     public int lvl0NonAirCount;
     /** Recompare parent mips even when old cached level-zero data is already identical. */
     public boolean hasFluidMipData;
+    /** False for reconstructed coarse imports; those cells cannot establish a fine shoreline. */
+    public boolean sourceExact = true;
     public final long[] section;
     public VoxelizedSection(long[] section) {
         this.section = section;
@@ -54,6 +56,7 @@ public class VoxelizedSection {
     public VoxelizedSection zero() {
         this.lvl0NonAirCount = 0;
         this.hasFluidMipData = false;
+        this.sourceExact = true;
         Arrays.fill(this.section, 0);
         return this;
     }

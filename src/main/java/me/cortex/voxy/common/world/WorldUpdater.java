@@ -35,6 +35,7 @@ public class WorldUpdater {
 
             long status = insertSectionLvlIntoWorld(section, worldSection);
             boolean didStateChange = (status&1)==1;
+            boolean sourceKnowledgeChanged = lvl == 0 && worldSection.setSourceKnown(section.x, section.y, section.z, section.sourceExact);
             int nonAirCount = (int) ((status>>1)&0x1FFF);
 
 
@@ -46,7 +47,7 @@ public class WorldUpdater {
                 }
             }
 
-            if (didStateChange||(emptinessStateChange!=0)) {
+            if (didStateChange||sourceKnowledgeChanged||(emptinessStateChange!=0)) {
                 //TODO: somehow foward the neighbors that are facing the updated area, this allows forwarding to the dirty consumer
                 // which can decide wether to dispatch mesh rebuilds to the surounding sections
                 //Bitmask of neighboring sections
@@ -61,7 +62,9 @@ public class WorldUpdater {
                     neighbors |= ((section.z^(section.z+1))>>(lvl+1))==0?0:1<<5;//+z
                 }
 
-                into.markDirty(worldSection, (didStateChange?UPDATE_TYPE_BLOCK_BIT:0)|(emptinessStateChange!=0?UPDATE_TYPE_CHILD_EXISTENCE_BIT:0), neighbors);
+                into.markDirty(worldSection, (didStateChange?UPDATE_TYPE_BLOCK_BIT:0)
+                        |(sourceKnowledgeChanged?UPDATE_TYPE_SOURCE_KNOWLEDGE_BIT:0)
+                        |(emptinessStateChange!=0?UPDATE_TYPE_CHILD_EXISTENCE_BIT:0), neighbors);
             }
 
             //Need to release the section after using it

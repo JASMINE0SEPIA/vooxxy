@@ -336,6 +336,7 @@ public class DHImporter implements IDataImporter {
         var stream = new DataInputStream(in);
         long[] storage = ctx.storageCache;
         VoxelizedSection section = ctx.section;
+        section.sourceExact = false;
         byte[] col = ctx.colScratch;
         for (int x = 0; x < 64; x++) {
             for (int z = 0; z < 64; z++) {
