@@ -584,6 +584,9 @@ public class ModelFactory {
             faceModelData |= needsAlphaDiscard?1<<22:0;
 
             faceModelData |= ((!faceCoversFullBlock)&&layer != ChunkSectionLayer.TRANSLUCENT)?1<<23:0;//Alpha discard override, translucency doesnt have alpha discard
+            // The raster 90% coverage heuristic is not proof that an RT alpha lookup is redundant.
+            // Export a separate exact promise over the complete tile, including unwritten texels.
+            if (TextureUtils.isSolid(textureData[face])) faceModelData |= me.cortex.voxy.api.LodModel.FACE_OPAQUE_ALPHA;
 
             //Bits 24,25 are tint metadata
             if (tintSources!=null) {//We have a tint

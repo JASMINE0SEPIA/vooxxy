@@ -7,6 +7,8 @@ public record LodModel(int id, int down, int up, int north, int south, int west,
                        int flags, int tint, BlockState state) {
     /** Wholly translucent model before binary-alpha raster optimization; old consumers ignore it. */
     public static final int AUTHORED_TRANSLUCENT = 1 << 5;
+    /** Face-data bit: every texel of the complete baked face has alpha 255 (not a raster heuristic). */
+    public static final int FACE_OPAQUE_ALPHA = 1 << 26;
     public boolean authoredTranslucent() { return (flags & (4 | AUTHORED_TRANSLUCENT)) != 0; }
     public int face(int face) {
         return switch (face) {
