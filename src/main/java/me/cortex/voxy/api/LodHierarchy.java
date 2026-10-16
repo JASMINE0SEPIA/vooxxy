@@ -44,10 +44,10 @@ public final class LodHierarchy {
             }
         }
 
-        /** Prior finer geometry is usable only when it still covers every existing child of this node. */
+        /** Keep previously drawn detail while new children arrive; actual removals invalidate it. */
         public List<LodMesh> fineBranch(LodMesh node) {
             LodMesh old = nodes.get(node.key);
-            if (old == null || old.children != node.children || leaves.contains(node.key)) return List.of();
+            if (old == null || (old.children & node.children) != old.children || leaves.contains(node.key)) return List.of();
             List<LodMesh> result = new ArrayList<>();
             return collect(old, result) ? result : List.of();
         }
@@ -70,11 +70,15 @@ public final class LodHierarchy {
         private boolean collect(LodMesh node, List<LodMesh> out) {
             if (leaves.contains(node.key)) { out.add(node); return true; }
             if (node.level == 0 || node.children == 0) return false;
+            boolean any = false;
             for (int child = 0; child < 8; child++) if ((node.children & (1 << child)) != 0) {
                 LodMesh mesh = nodes.get(childKey(node, child));
-                if (mesh == null || !collect(mesh, out)) return false;
+                // A previous selection may deliberately contain only the visited/in-range part of a
+                // root. Preserve its actual published leaves, including empty markers, rather than
+                // replacing that whole area with a giant coarse voxel when a new sibling is unknown.
+                if (mesh != null) any |= collect(mesh, out);
             }
-            return true;
+            return any;
         }
     }
 

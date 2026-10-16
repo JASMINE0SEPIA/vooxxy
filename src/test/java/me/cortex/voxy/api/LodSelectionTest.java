@@ -90,11 +90,27 @@ class LodSelectionTest {
         assertEquals(Set.of(a,empty),new HashSet<>(next.readySelectionUnsorted(m -> m==root || m==empty,() -> List.of(a,empty),old)));
         assertEquals(Set.of(aa,empty),new HashSet<>(next.readySelectionUnsorted(m -> m==aa || m==empty,() -> List.of(a,empty),old)));
         assertEquals(Set.of(a,empty),new HashSet<>(old.fineBranch(root)));
-        assertTrue(old.fineBranch(mesh(4,0,7)).isEmpty());
+        assertEquals(Set.of(a,empty),new HashSet<>(old.fineBranch(mesh(4,0,7))),"newly discovered siblings must not discard existing detail");
+        assertTrue(old.fineBranch(mesh(4,0,1)).isEmpty(),"removing a formerly populated child invalidates stale detail");
         assertEquals(Set.of(root,a,empty),new HashSet<>(old.branchNodes(root)));
         var coarser=LodHierarchy.prepare(scene(List.of(root),List.of()));
         coarser.readySelectionUnsorted(m -> false,() -> List.of(a,empty),old);
         assertFalse(coarser.isCoveredParent(root.key),"A requested coarse target must still be built");
+    }
+
+    @Test void discoveringASiblingKeepsPublishedFineTerrainAcrossRepeatedSnapshotsUntilItIsReady() {
+        LodMesh root=mesh(4,0,3),a=mesh(3,0,0),b=mesh(3,1,0);
+        var old=LodHierarchy.prepare(scene(List.of(a,b),List.of(root))).coverage(List.of(a,b));
+        LodMesh expanded=mesh(4,0,7);
+        LodMesh c=new LodMesh(WorldEngine.getWorldSectionId(3,0,0,1),1,3,0,0,1,0,0,new long[]{1},new int[8]);
+        var selection=LodHierarchy.prepare(scene(List.of(a,b,c),List.of(expanded)));
+        var retained=old;
+        for(int i=0;i<20;i++) {
+            List<LodMesh> result=selection.readySelectionUnsorted(m->m!=c,()->List.of(a,b),retained);
+            assertEquals(Set.of(a,b),new HashSet<>(result),"known fine terrain must not become the coarse root");
+            retained=selection.coverage(result,retained);
+        }
+        assertEquals(Set.of(a,b,c),new HashSet<>(selection.readySelectionUnsorted(m->true,()->List.of(a,b),retained)));
     }
 
     @Test void readyRootsAvoidCopyingPreviousCoverageAndTraversalOrderStaysStable() {
