@@ -34,6 +34,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class SoftwareModelTextureBakery {
+    /** Bake-only flag, distinct from the packed GPU model flags. */
+    public static final int HAS_OPAQUE_GEOMETRY = 1 << 4;
     //Note: the first bit of metadata is if alpha discard is enabled
     private static final Matrix4f[] VIEWS = new Matrix4f[6];
 
@@ -207,6 +209,7 @@ public class SoftwareModelTextureBakery {
         boolean isAnyShaded = false;
         boolean isAnyDarkend = false;
         boolean anyTranslucent = false;
+        boolean anyOpaque = false;
         boolean anyDiscard = false;
         if (isBlock) {
             this.opaqueVC.reset();
@@ -215,6 +218,7 @@ public class SoftwareModelTextureBakery {
             isAnyShaded |= this.opaqueVC.anyShaded|this.translucentVC.anyShaded;
             isAnyDarkend |= this.opaqueVC.anyDarkendTex|this.translucentVC.anyDarkendTex;
             anyTranslucent |= !this.translucentVC.isEmpty();
+            anyOpaque |= !this.opaqueVC.isEmpty();
             anyDiscard |= this.opaqueVC.anyDiscard;
             if (!(this.opaqueVC.isEmpty()&&this.translucentVC.isEmpty())) {//only render if there... is shit to render
                 for (int i = 0; i < VIEWS.length; i++) {
@@ -239,6 +243,7 @@ public class SoftwareModelTextureBakery {
                 isAnyShaded |= this.opaqueVC.anyShaded|this.translucentVC.anyShaded;
                 isAnyDarkend |= this.opaqueVC.anyDarkendTex|this.translucentVC.anyDarkendTex;
                 anyTranslucent |= !this.translucentVC.isEmpty();
+                anyOpaque |= !this.opaqueVC.isEmpty();
                 anyDiscard |= this.opaqueVC.anyDiscard;
 
                 this.rasterizer.setFaceCull(i==1||i==2||i==4);
@@ -254,7 +259,7 @@ public class SoftwareModelTextureBakery {
             }
         }
 
-        return (isAnyShaded?1:0)|(isAnyDarkend?2:0)|(anyTranslucent?4:0)|(anyDiscard?8:0);
+        return (isAnyShaded?1:0)|(isAnyDarkend?2:0)|(anyTranslucent?4:0)|(anyDiscard?8:0)|(anyOpaque?HAS_OPAQUE_GEOMETRY:0);
     }
 
 

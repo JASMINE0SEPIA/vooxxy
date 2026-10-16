@@ -5,6 +5,9 @@ import net.minecraft.world.level.block.state.BlockState;
 /** Immutable baked model metadata; the texture is in the provider's six-face atlas. */
 public record LodModel(int id, int down, int up, int north, int south, int west, int east,
                        int flags, int tint, BlockState state) {
+    /** Wholly translucent model before binary-alpha raster optimization; old consumers ignore it. */
+    public static final int AUTHORED_TRANSLUCENT = 1 << 5;
+    public boolean authoredTranslucent() { return (flags & (4 | AUTHORED_TRANSLUCENT)) != 0; }
     public int face(int face) {
         return switch (face) {
             case 0 -> down;

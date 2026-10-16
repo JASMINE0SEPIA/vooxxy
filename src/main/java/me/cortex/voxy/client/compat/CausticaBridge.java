@@ -93,7 +93,7 @@ public final class CausticaBridge {
             LodQuad quad=LodQuad.decode(packed,model,mesh.level);
             var state=model.state();
             boolean water=state.getFluidState().is(FluidTags.WATER), lava=state.getFluidState().is(FluidTags.LAVA);
-            boolean glass=!water&&!lava&&(model.flags()&4)!=0;
+            boolean glass=!water&&!lava&&model.authoredTranslucent();
             int material=water?12:lava?6:state.getLightEmission()>0?15:state.is(BlockTags.LEAVES)?1:glass?0:2;
             int color=average.applyAsInt(model.id());
             int tint=(model.flags()&2)!=0&&model.tint()>=0?scene.colour(model.tint()+quad.biome()):model.tint();
