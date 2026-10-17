@@ -47,7 +47,7 @@
     "sodium": "${allowed_sodium_versions}"
   },
   "breaks": {
-    "sodium": ["<0.9.2", ">0.9.2 <0.9.3-alpha.1", ">0.9.3-alpha.1"],
+    "sodium": ["<0.9.2", ">0.9.2 <0.9.3-alpha.1", ">0.9.3-alpha.1 <0.9.3-beta.1", ">0.9.3-beta.1"],
     "voxyworldgenv2": "=2.2.2"
   },
   "accessWidener": "voxy.accesswidener"
