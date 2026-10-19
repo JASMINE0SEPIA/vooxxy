@@ -39,3 +39,14 @@ Evidence and the development-only replay are in the sibling gysf repository:
 `artifacts/2026-10-19/lod-reentry/` and `LodReentryCapture`. The final packaged
 artifact additionally receives a separate cold-start replay at the saved low view
 distance, with ingestion still disabled, waiting for the pending rebuild to drain.
+
+The final `bd20c89` JAR passes that cold replay: all 2,412 compacted GPU LOD batches
+finish, sampled far coverage reaches 3,151 sections, and the pending queue is
+empty. All 2,017 nonempty far sources remain selected, ingestion stays disabled,
+and there is no temporary view-distance reduction. Reconstruction takes about
+225 seconds in this validation-enabled fixture and publishes useful partial
+results throughout; this is not a performance guarantee for other worlds.
+The Vulkan/NGX gate passes again, native allocations return to zero with no
+deferrals, and peak native LOD memory is 1,418,030,608 bytes. The packaged JAR's
+496 runtime classes match both the build output and the candidate used for the
+full distance-change/re-entry sequence.
