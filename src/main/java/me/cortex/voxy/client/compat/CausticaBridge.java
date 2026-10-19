@@ -46,8 +46,7 @@ public final class CausticaBridge {
     /** Advance uploads before RT frame recording and return the complete versioned scene. */
     public static LodScene pollScene(double x, double y, double z) {
         var client = Minecraft.getInstance();
-        var renderer = IVoxyRenderSystemHolder.getNullable();
-        if (!configuredEnabled() || client.level == null || renderer == null || renderer.vkCore == null) return null;
+        if (!configuredEnabled() || client.level == null) return null;
         var camera = client.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
         var projection = new Matrix4f(camera.projectionMatrix).mul(camera.viewRotationMatrix);
         var window = client.getWindow();

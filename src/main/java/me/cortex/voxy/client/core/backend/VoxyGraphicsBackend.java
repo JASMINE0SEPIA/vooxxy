@@ -42,6 +42,13 @@ public enum VoxyGraphicsBackend {
         return current;
     }
 
+    /** A Vulkan external renderer consumes native LOD data, not the standalone Blaze3D draw path. */
+    public static RendererMode effectivePreference(VoxyGraphicsBackend backend, RendererMode preference,
+                                                    boolean externalRendererActive) {
+        if (backend == VULKAN && externalRendererActive) return RendererMode.NATIVE;
+        return preference == null ? RendererMode.NATIVE : preference;
+    }
+
     public static void resolveRenderer(RendererMode preference, boolean nativeAvailable) {
         nativeRendererAvailable = nativeAvailable;
         applyPreference(preference);

@@ -1,6 +1,7 @@
 package me.cortex.voxy.client;
 
 import com.mojang.renderpearl.api.device.GpuDevice;
+import me.cortex.voxy.api.VoxyLodApi;
 import me.cortex.voxy.client.compat.IrisBackendCompat;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
@@ -42,7 +43,9 @@ public class VoxyClient implements ClientModInitializer {
         VoxyGraphicsBackend.RendererMode configuredRenderer = VoxyConfig.CONFIG.getRendererBackendMode();
         VoxyCommon.setInstanceFactory(VoxyClientInstance::new);
 
-        if (configuredRenderer == VoxyGraphicsBackend.RendererMode.BLAZE3D) {
+        if (configuredRenderer == VoxyGraphicsBackend.RendererMode.BLAZE3D
+                && VoxyGraphicsBackend.effectivePreference(VoxyGraphicsBackend.current(), configuredRenderer,
+                        VoxyLodApi.externalRendererActive()) == VoxyGraphicsBackend.RendererMode.BLAZE3D) {
             // Iris only exposes the active shaderpack after the world becomes available. Keep
             // Voxy rendererless until then so neither Native nor Blaze3D starts prematurely.
             pendingBlaze3dSelectionAtWorldEntry = true;
@@ -149,9 +152,14 @@ public class VoxyClient implements ClientModInitializer {
         VoxyGraphicsBackend.RendererMode requestedMode = rendererMode == null
                 ? VoxyGraphicsBackend.RendererMode.NATIVE
                 : rendererMode;
-        VoxyGraphicsBackend.RendererMode effectiveMode = requestedMode;
+        VoxyGraphicsBackend.RendererMode effectiveMode = VoxyGraphicsBackend.effectivePreference(
+                VoxyGraphicsBackend.current(), requestedMode, VoxyLodApi.externalRendererActive());
+        if (effectiveMode != requestedMode) {
+            Logger.info("External Vulkan renderer requires the native LOD provider; preserving standalone renderer preference "
+                    + requestedMode.name().toLowerCase(java.util.Locale.ROOT));
+        }
 
-        if (requestedMode == VoxyGraphicsBackend.RendererMode.BLAZE3D
+        if (effectiveMode == VoxyGraphicsBackend.RendererMode.BLAZE3D
                 && !allowBlaze3dWithIris
                 && IrisBackendCompat.shouldAvoidBlaze3dRenderer()) {
             effectiveMode = VoxyGraphicsBackend.RendererMode.NATIVE;
@@ -169,6 +177,26 @@ public class VoxyClient implements ClientModInitializer {
         }
         VoxyGraphicsBackend.resolveRenderer(effectiveMode, nativeAvailable);
         Logger.info("Selected Voxy renderer: " + VoxyGraphicsBackend.statusLine());
+    }
+
+    /** Render-thread retry after world entry; disk restoration must not depend on new chunk ingestion. */
+    public static void ensureExternalRenderer() {
+        if (!VoxyLodApi.externalRendererActive() || VoxyGraphicsBackend.current() != VoxyGraphicsBackend.VULKAN
+                || !VoxyConfig.CONFIG.enabled || !VoxyConfig.CONFIG.enableRendering
+                || Minecraft.getInstance().level == null || VoxyCommon.getInstance() == null) return;
+        var holder = IVoxyRenderSystemHolder.getNullableHolder();
+        if (holder == null) return;
+        if (!VoxyGraphicsBackend.usesNativeVulkanRenderer()) {
+            selectRenderer(VoxyConfig.CONFIG.getRendererBackendMode(), false);
+            if (!VoxyGraphicsBackend.usesNativeVulkanRenderer()) return;
+            holder.voxy$shutdownRenderer();
+        }
+        var renderer = holder.voxy$getRenderSystem();
+        if (renderer != null && renderer.vkCore == null) {
+            holder.voxy$shutdownRenderer();
+            renderer = null;
+        }
+        if (renderer == null) holder.voxy$createRenderer();
     }
 
     private static boolean probeNativeOpenGlRenderer() {

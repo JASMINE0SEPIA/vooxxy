@@ -35,6 +35,7 @@ public final class VoxyLodApi {
 
     /** Returns null when the world or Vulkan LOD provider is unavailable. */
     public static LodScene update(double x, double y, double z, org.joml.Matrix4fc projectionView, int width, int height) {
+        me.cortex.voxy.client.VoxyClient.ensureExternalRenderer();
         var renderer = IVoxyRenderSystemHolder.getNullable();
         return renderer == null || renderer.vkCore == null ? null : renderer.vkCore.externalScene(x, y, z, projectionView, width, height);
     }
